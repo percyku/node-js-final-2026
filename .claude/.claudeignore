@@ -1,0 +1,8 @@
+# 忽略前端目錄
+
+frontend/
+./frontend/
+
+# 忽略其他無關或產生的工具資料夾
+
+node_modules/
