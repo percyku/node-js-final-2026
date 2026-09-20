@@ -312,3 +312,60 @@ test/
 後端套件也應安裝在 `backend/`，因此 `backend/package.json` 與 `backend/package-lock.json` 可以正常修改。
 
 `docker-compose.yml` 是例外，容器化階段需要依照註解加入 backend 服務。
+
+---
+
+# 【延伸】Spring Boot 版後端（`livefit/`）
+
+> 以下**不屬於作業範圍**，是在作業完成後額外做的練習。
+> 驗收對象仍然是 `backend/`（Node.js），GitHub Actions 也只跑那一套。
+
+## 這是什麼
+
+把 `backend/` 的業務邏輯用 **Spring Boot 3.5 + Spring Data JPA + Spring Security** 重寫一次，放在 `livefit/`。
+
+原 Node 版把 controller 與業務邏輯寫在一起，這個版本刻意拆成 MVC 三層：controller 只做路由對映與回應包裝，**所有驗證與業務邏輯都在 service**。驗證改用 Spring Security + JWT（`io.jsonwebtoken`），以便日後擴充角色權限。
+
+行為以 `docs/openapi.yaml` 為準，**通過作業原生的 68 項合約測試**。
+
+## 怎麼跑
+
+需要 JDK 21 與 Maven。
+
+```bash
+# 1. 啟動資料庫（資料表由 Node 版的 TypeORM 建立，
+#    若 pgData volume 是空的，要先跑一次 backend/ 讓它建表）
+docker compose up -d postgres
+
+# 2. 設定環境變數
+cd livefit && cp .env.example .env    # 記得把 JWT_SECRET 換成 32 字元以上的隨機字串
+
+# 3. 啟動
+mvn spring-boot:run
+```
+
+port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` 相同，兩者不能同時啟動**；要並行請改成其他 port，例如 8085。
+
+## 拿作業的測試來驗
+
+`test/helpers.js` 的 base URL 讀 `API_BASE_URL` 環境變數（預設 `http://localhost:8080`），所以不用改任何測試檔：
+
+```bash
+npm test                                        # Spring Boot 跑在 8080 時
+API_BASE_URL=http://localhost:8085 npm test     # 跑在其他 port 時
+```
+
+## 詳細文件
+
+| 文件 | 內容 |
+|---|---|
+| [`docs/springboot-migration-plan.md`](docs/springboot-migration-plan.md) | 架構設計、28 支 API 的實作重點、Entity 對映、Spring Security 規則，以及與 Node 版的行為差異表 |
+| [`docs/springboot-migration-worklog.md`](docs/springboot-migration-worklog.md) | 變更紀錄與踩坑排查過程 |
+| [`CLAUDE.md`](CLAUDE.md) | 給 Claude Code 的 repo 開發指引 |
+
+## 已知限制
+
+- **不含 Dockerfile**，不參與容器化驗收
+- **不含單元測試**，驗證依靠上述的合約測試
+- `POST /api/upload` 是 openapi 標明的選做加分題，兩套後端都未實作
+- `ddl-auto=none`，**不會自動建表**，依賴 Node 版先把 schema 建好
