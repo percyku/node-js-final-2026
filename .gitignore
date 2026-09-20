@@ -5,3 +5,4 @@ coverage/
 *.log
 dist/
 jest-result.json
+ask.md
