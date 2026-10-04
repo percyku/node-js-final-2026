@@ -31,7 +31,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({JwtProperties.class, GoogleProperties.class})
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

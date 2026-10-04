@@ -4,6 +4,7 @@ import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.common.ValidUtils;
 import com.percyku.livefit.dto.user.CreditPurchaseResponse;
+import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
 import com.percyku.livefit.dto.user.LoginResponse;
 import com.percyku.livefit.dto.user.ProfileResponse;
@@ -17,6 +18,8 @@ import com.percyku.livefit.entity.User;
 import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.GoogleIdTokenVerifier;
+import com.percyku.livefit.security.GoogleIdTokenVerifier.GoogleProfile;
 import com.percyku.livefit.security.JwtTokenProvider;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -25,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.UUID;
 
-/** 對應 backend/controllers/users.js 的業務邏輯 */
+/** 對應 backend/controllers/users.js 的業務邏輯，另加 Node 版沒有的 Google 登入 */
 @Service
 public class UserService {
 
@@ -34,17 +37,23 @@ public class UserService {
     private final CourseBookingRepository courseBookingRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
+    private final GoogleIdTokenVerifier googleIdTokenVerifier;
+
+    /** users.name 的欄位長度 */
+    private static final int NAME_MAX_LENGTH = 50;
 
     public UserService(UserRepository userRepository,
                        CreditPurchaseRepository creditPurchaseRepository,
                        CourseBookingRepository courseBookingRepository,
                        PasswordEncoder passwordEncoder,
-                       JwtTokenProvider tokenProvider) {
+                       JwtTokenProvider tokenProvider,
+                       GoogleIdTokenVerifier googleIdTokenVerifier) {
         this.userRepository = userRepository;
         this.creditPurchaseRepository = creditPurchaseRepository;
         this.courseBookingRepository = courseBookingRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
+        this.googleIdTokenVerifier = googleIdTokenVerifier;
     }
 
     @Transactional
@@ -89,12 +98,76 @@ public class UserService {
         User user = userRepository.findByEmail(normalizeEmail(request.email()))
                 .orElseThrow(() -> ApiException.badRequest(ErrorMessages.LOGIN_FAILED));
 
-        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
+        // 純 Google 註冊的帳號沒有密碼，一律視為登入失敗（共用同一句訊息，不洩漏帳號型態）
+        if (user.getPassword() == null
+                || !passwordEncoder.matches(request.password(), user.getPassword())) {
             throw ApiException.badRequest(ErrorMessages.LOGIN_FAILED);
         }
 
         String token = tokenProvider.createToken(user.getId(), user.getRole());
         return LoginResponse.of(token, user.getName());
+    }
+
+    /**
+     * Google 登入：驗證 ID token 後依序以 google_sub、email 對應帳號，都沒有就建立新帳號。
+     * 刻意不加 @Transactional：驗證 token 要連 Google 抓公鑰，不該佔著資料庫連線等網路；
+     * 後面每個 repository 呼叫各自是一個交易，重複寫入由 email / google_sub 的 unique 約束擋下。
+     */
+    public LoginResponse googleLogin(GoogleLoginRequest request) {
+        if (request == null || !ValidUtils.isValidString(request.credential())) {
+            throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
+        }
+
+        GoogleProfile profile = googleIdTokenVerifier.verify(request.credential().trim());
+        // 沒驗證過的 email 不能拿來綁定既有帳號，否則任何人都能用別人的信箱接管帳號
+        if (!ValidUtils.isValidString(profile.sub())
+                || !ValidUtils.isValidString(profile.email())
+                || !profile.emailVerified()) {
+            throw ApiException.badRequest(ErrorMessages.GOOGLE_VERIFY_FAILED);
+        }
+
+        User user = userRepository.findByGoogleSub(profile.sub())
+                .orElseGet(() -> linkOrCreateGoogleUser(profile));
+
+        String token = tokenProvider.createToken(user.getId(), user.getRole());
+        return LoginResponse.of(token, user.getName());
+    }
+
+    private User linkOrCreateGoogleUser(GoogleProfile profile) {
+        String email = normalizeEmail(profile.email());
+
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user != null) {
+            // 同一個 email 已綁定另一個 Google 帳號時不覆蓋
+            if (user.getGoogleSub() != null) {
+                throw ApiException.conflict(ErrorMessages.EMAIL_TAKEN);
+            }
+            // 綁定只寫入 google_sub，原本的密碼保留，之後兩種方式都能登入
+            user.setGoogleSub(profile.sub());
+            return userRepository.save(user);
+        }
+
+        User created = new User();
+        created.setName(resolveGoogleName(profile.name(), email));
+        created.setEmail(email);
+        created.setGoogleSub(profile.sub());
+        created.setRole(User.ROLE_USER);
+        return userRepository.save(created);
+    }
+
+    /** Google 沒給名稱時用 email 的 @ 前段，並截到 users.name 的長度上限 */
+    private String resolveGoogleName(String googleName, String email) {
+        String name = ValidUtils.isValidString(googleName)
+                ? googleName.trim()
+                : email.substring(0, email.indexOf('@') > 0 ? email.indexOf('@') : email.length());
+        if (name.length() <= NAME_MAX_LENGTH) {
+            return name;
+        }
+        // 避免把 emoji 等代理對從中間切斷
+        int end = Character.isHighSurrogate(name.charAt(NAME_MAX_LENGTH - 1))
+                ? NAME_MAX_LENGTH - 1
+                : NAME_MAX_LENGTH;
+        return name.substring(0, end).trim();
     }
 
     public ProfileResponse getProfile(User user) {
@@ -143,6 +216,10 @@ public class UserService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.badRequest(ErrorMessages.UPDATE_FAILED));
+
+        if (user.getPassword() == null) {
+            throw ApiException.badRequest(ErrorMessages.GOOGLE_ACCOUNT_NO_PASSWORD);
+        }
 
         if (!passwordEncoder.matches(request.password(), user.getPassword())) {
             throw ApiException.badRequest(ErrorMessages.PASSWORD_WRONG);

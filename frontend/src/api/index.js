@@ -10,6 +10,7 @@ import {
 import {
   postSignup,
   postLogin,
+  postGoogleLogin,
   getUserCourses,
   getUserCreditPackage,
   getUserProfile,
@@ -39,6 +40,7 @@ export {
   deleteSkill,
   postSignup,
   postLogin,
+  postGoogleLogin,
   getUserCourses,
   getUserCreditPackage,
   getUserProfile,

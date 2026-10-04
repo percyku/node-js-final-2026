@@ -37,6 +37,10 @@ public final class ErrorMessages {
     public static final String PASSWORD_CONFIRM_MISMATCH = "新密碼與驗證新密碼不一致";
     public static final String PASSWORD_WRONG = "密碼輸入錯誤";
 
+    public static final String GOOGLE_VERIFY_FAILED = "Google 登入驗證失敗";
+    public static final String GOOGLE_NOT_CONFIGURED = "尚未設定 Google 登入";
+    public static final String GOOGLE_ACCOUNT_NO_PASSWORD = "此帳號使用 Google 登入，無法修改密碼";
+
     public static final String USER_NOT_FOUND = "使用者不存在";
     public static final String ALREADY_COACH = "使用者已經是教練";
     public static final String UPDATE_USER_FAILED = "更新使用者失敗";

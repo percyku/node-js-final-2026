@@ -8,6 +8,8 @@
 
 資料庫（PostgreSQL 16.4-alpine3.20，容器內 `fitness` / schema `public`）的 8 張表是由 Node 端 TypeORM `synchronize: true` 建立的，**本專案不得修改任何 schema**。
 
+> **後續變更**：`feature/social-login` 起，Spring Boot 版改用獨立資料庫 `livefit` 並開啟 `ddl-auto=update`，上面這條限制與 §2、§4 的 `ddl-auto=none` 已不再適用，詳見 [§11](#11-後續擴充獨立資料庫與-google-登入)。
+
 ### 已確認的決策
 
 | 項目 | 決定 |
@@ -345,3 +347,71 @@ M1～M6 與 smoke 全部通過，代表 Spring Boot 版與 Node 版在驗收層�
 5. 交叉驗證：Node 後端在 8080、Spring 在 8085，對同一組測資打相同 endpoint 比對 JSON——差異應只落在 §8 表列的項目。
 
 > 根目錄的 `npm run test:m1`~`test:m6`（jest + supertest，68 tests）是打 8080 的 Node 後端；若要拿來驗 Spring 版，需把測試的 base URL 指到 8085。
+
+---
+
+## 11. 後續擴充：獨立資料庫與 Google 登入
+
+§1–§10 記錄的是「與 Node 版共用 `fitness`、不得更動 schema」的移植階段。`feature/social-login` 起，Spring Boot 版改為獨立發展，以下三點取代前面的對應描述。
+
+### 11.1 獨立資料庫 `livefit`
+
+| 項目 | 移植階段 | 現在 |
+|---|---|---|
+| 資料庫 | `fitness`（與 Node 共用） | **`livefit`**（同一個 postgres 容器，與 `fitness` 並存、互不影響） |
+| `ddl-auto` | `none` | **`update`**（`.env` 的 `DDL_AUTO` 可覆寫） |
+| 建表 | 必須先跑 Node 後端 | Hibernate 首次啟動時依 Entity 建立 8 張表 |
+
+- postgres 容器只會自動建立 `fitness`，新環境要先手動建一次：
+
+  ```bash
+  docker compose exec postgres psql -U student -d fitness -c "CREATE DATABASE livefit"
+  ```
+
+- `application.properties` 的 `DB_DATABASE` 預設值也改成 `livefit`，避免沒有 `.env` 時 `update` 去改到原始的 `fitness`。
+- 加上 `hibernate.type.preferred_instant_jdbc_type=TIMESTAMP`，讓 `Instant` 仍建成 `timestamp without time zone`（Hibernate 6 預設是 `with time zone`），與既有的 `hibernate.jdbc.time_zone=UTC` 設計一致。
+- 與 TypeORM 建出的 schema 的差異：外鍵只存在於 Entity 有宣告關聯的欄位（`course.user_id`、`course.skill_id`、`coaches.user_id`、`coach_with_skills.skill_id`、`credit_purchase.credit_package_id`）；`credit_packages.name` 是 `varchar(255)`；時間欄位是 `timestamp(6)`。
+- 兩個資料庫的資料不互通：同一個帳號要在兩邊各自註冊。
+
+### 11.2 Google 登入（`POST /api/users/google`）
+
+流程：前端用 Google Identity Services 取得 ID token → 送到後端驗證 → 後端簽發與一般登入**相同格式**的自家 JWT。後端維持 STATELESS，不使用 `oauth2-client` 的 redirect / session 流程，也不需要 Google client secret。
+
+| 檔案 | 內容 |
+|---|---|
+| `pom.xml` | 新增 `spring-security-oauth2-jose`（只用 `NimbusJwtDecoder`） |
+| `security/GoogleIdTokenVerifier` | 以 Google JWKS 驗簽，檢查 `exp`、`iss`、`aud`（= `GOOGLE_CLIENT_ID`） |
+| `config/GoogleProperties` | `google.client-id` ← 環境變數 `GOOGLE_CLIENT_ID` |
+| `entity/User` | `password` 改為可 null；新增 `google_sub`（unique） |
+| `UserService.googleLogin` | 帳號對應邏輯（見下） |
+| `SecurityConfig` | matcher 不需改，`anyRequest().permitAll()` 已涵蓋 |
+
+帳號對應規則（依序）：
+
+1. `google_sub` 已存在 → 直接登入。
+2. Google 的 email（必須 `email_verified=true`）已有帳號 → 寫入 `google_sub` 綁定，**不動原密碼**。
+3. 都沒有 → 建立新帳號，`password` 為 null、`role` 為 `USER`。
+
+各帳號型態可用的功能只取決於 `password` 是否為 null：
+
+| 帳號型態 | 密碼登入 | Google 登入 | 修改密碼 |
+|---|---|---|---|
+| 密碼註冊、未綁 Google | ✅ | 首次使用時自動綁定 | ✅ |
+| 密碼註冊、已綁 Google | ✅ | ✅ | ✅ |
+| 純 Google 建立 | ❌ 400 `使用者不存在或密碼輸入錯誤` | ✅ | ❌ 400 `此帳號使用 Google 登入，無法修改密碼` |
+
+`googleLogin` 刻意不加 `@Transactional`：驗證 token 要連 Google 抓公鑰，不該佔著資料庫連線等網路。
+
+### 11.3 前端
+
+- `components/GoogleLoginButton.vue`：動態載入 GIS script 並渲染官方按鈕，登入頁與註冊頁共用。**`VITE_GOOGLE_CLIENT_ID` 未設定時不顯示**，所以搭配 Node 後端時畫面與原本相同。
+- `utils/loginHandler.js`：登入成功後的共用處理（存 cookie、更新 store、依角色導頁），密碼登入與 Google 登入共用。
+- `config/routeTable.js`：`post-users` 白名單加入 `/google`，避免殘留的舊 token 被附上。
+- `VITE_GOOGLE_CLIENT_ID` 是 build-time 變數：本機開發寫在 `frontend/.env`；容器化時由 `docker-compose.yml` 的 build arg 傳入。
+
+### 11.4 驗證結果
+
+- 根目錄 68 項合約測試對新資料庫 `livefit` 全數通過。
+- `\d users` 確認 `password` 可 null、`google_sub` 有 unique 約束、時間欄位為 `timestamp without time zone`；`fitness.users` 未被更動。
+- `POST /api/users/google`：空 body → 400 `欄位未填寫正確`；未設定 Client ID → 400 `尚未設定 Google 登入`；偽造簽章或格式錯誤的 token → 400 `Google 登入驗證失敗`。
+- 真實 Google 帳號的登入、綁定流程需要有效的 Client ID，須在瀏覽器手動驗證。

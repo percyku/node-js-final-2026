@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `backend/` | Node.js + Express 5 + TypeORM | 正式繳交用，GitHub Actions 驗收的對象 |
 | `livefit/` | Spring Boot 3.5 + Spring Data JPA + Spring Security | `springboot-backend` 分支上的移植版，不列入作業驗收 |
 
-兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。
+兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google 登入**並改用**獨立資料庫**（同文件 §11），這兩項 Node 版沒有。
 
 ## 規格的唯一來源
 
@@ -48,13 +48,25 @@ cd backend && npm start           # CI 驗收用的啟動方式
 
 ```bash
 export JAVA_HOME=~/Library/Java/JavaVirtualMachines/temurin-21.0.11/Contents/Home
-cd livefit && mvn spring-boot:run
+cd livefit && mvn spring-boot:run      # 必須在 livefit/ 下執行，否則讀不到 .env
 cd livefit && mvn -DskipTests compile
 ```
 
-> **本機 JDK 陷阱**：`/Library/Java/JavaVirtualMachines/` 下的 JDK 都是 x86 版，在 Apple Silicon 上會回 `bad CPU type`。只有 `~/Library/Java/JavaVirtualMachines/temurin-21.0.11` 可用。
+> **本機 JDK 陷阱**：`/Library/Java/JavaVirtualMachines/` 下的 JDK 都是 x86 版，在 Apple Silicon 上會回 `bad CPU type`。只有 `~/Library/Java/JavaVirtualMachines/temurin-21.0.11` 可用。`JAVA_HOME` 每開一個新終端機都要重新 export，或直接寫進 `~/.zshrc`。
 >
-> **`./mvnw` 在本機會失敗**：macOS 的 `mktemp -d` 忽略 `TMPDIR`，wrapper 下載 Maven 時會回 `cannot create temp dir`。用系統安裝的 `mvn`。
+> **本機沒有安裝系統層級的 `mvn`**：直接打 `mvn` 會回 `zsh: command not found: mvn`。上面指令中的 `mvn` 請用下列任一方式取得：
+>
+> 1. 直接用 wrapper 快取裡的 Maven 3.9.16（與 `.mvn/wrapper/maven-wrapper.properties` 指定的版本相同，已驗證可編譯與啟動）：
+>    ```bash
+>    ~/.m2/wrapper/dists/apache-maven-3.9.16-bin/5grr65jo27hi51sujmtcldfovl/apache-maven-3.9.16/bin/mvn spring-boot:run
+>    ```
+> 2. 在 `~/.zshrc` 加別名，之後就能直接打 `mvn`：
+>    ```bash
+>    alias mvn=~/.m2/wrapper/dists/apache-maven-3.9.16-bin/5grr65jo27hi51sujmtcldfovl/apache-maven-3.9.16/bin/mvn
+>    ```
+> 3. `brew install maven`。
+>
+> **`./mvnw` 在本機會失敗**：macOS 的 `mktemp -d` 忽略 `TMPDIR`，wrapper 下載 Maven 時會回 `cannot create temp dir`，所以不要用它，改用上面三種方式之一。
 
 ### 測試
 
@@ -73,13 +85,21 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 
 ## 架構要點
 
-### 資料庫 schema 由 Node 端建立
+### 兩套後端各用各的資料庫
 
-專案內**沒有任何 SQL 或 migration 檔**。8 張表是 `backend/` 啟動時由 TypeORM `synchronize: true` 建出來的（`DB_SYNCHRONIZE=true`）。
+專案內**沒有任何 SQL 或 migration 檔**，兩邊都靠 ORM 自動建表，但連的是同一個 postgres 容器裡的**不同資料庫**：
 
-這造成一個順序相依：**Spring Boot 版的 `ddl-auto=none`，如果 `pgData` volume 是空的，必須先跑一次 Node 後端建表**，否則所有查詢都會失敗。
+| 後端 | 資料庫 | 建表方式 |
+|---|---|---|
+| `backend/` | `fitness` | TypeORM `synchronize: true`（`DB_SYNCHRONIZE=true`） |
+| `livefit/` | `livefit` | Hibernate `ddl-auto=update`（`.env` 的 `DDL_AUTO`） |
 
-容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。
+- **`livefit` 資料庫不會自動建立**：postgres 容器只建 `fitness`。`pgData` volume 清空後（例如 `npm run db:reset`）要重新執行 `docker compose exec postgres psql -U student -d fitness -c "CREATE DATABASE livefit"`，否則 Spring Boot 啟動會失敗。
+- **不要把 `livefit/.env` 的 `DB_DATABASE` 指回 `fitness`**：`ddl-auto=update` 會去改 Node 版的 schema。
+- 兩個資料庫的資料不互通，帳號要各自註冊。
+- `ddl-auto=update` 只增不改：新增欄位會自動補上，但改欄位型別、長度、nullable 不會套用到既有的表，需要手動 `ALTER TABLE`。
+
+容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users` 表比 Node 版多一個 `google_sub`，且 `password` 可為 null。
 
 ### 兩套後端的分層差異
 
@@ -100,9 +120,19 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 
 `livefit/config/WebMvcConfig.java` 用 `setUseTrailingSlashMatch(true)` 補回這個行為。該 API 在 Spring 6 已 deprecated、預計 Spring 7 移除，**升級到 Boot 4 時要改成在各 `@RequestMapping` 明列 `{"", "/"}`，或在反向代理做 301 轉址**。
 
-### 密碼雜湊可互通
+### Google 登入（僅 `livefit/`）
 
-Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜湊格式相容，**同一批使用者兩邊都能登入**。但 JWT secret 不同，**token 不能跨後端使用**。
+`POST /api/users/google` 收前端 Google Identity Services 給的 ID token（`credential`），由 `security/GoogleIdTokenVerifier` 用 Google 公鑰驗簽後，簽發與一般登入**相同格式**的自家 JWT。後端維持 STATELESS，沒有 redirect / session 流程，也不需要 client secret。
+
+- **各帳號能做什麼只看 `users.password` 是否為 null**，與有沒有綁 Google 無關。先用密碼註冊、之後用同 email 的 Google 登入會自動綁定（只寫入 `google_sub`，密碼保留），兩種登入與修改密碼都照常可用。純 Google 建立的帳號 `password` 為 null，密碼登入與修改密碼都回 400。**新增任何會讀 `user.getPassword()` 的邏輯時要處理 null**。
+- 綁定既有帳號的前提是 Google 回傳 `email_verified=true`，這個檢查不能拿掉，否則能用未驗證的信箱接管別人的帳號。
+- `GOOGLE_CLIENT_ID`（後端）與 `VITE_GOOGLE_CLIENT_ID`（前端）必須是**同一個值**；後端留空時端點回 400 `尚未設定 Google 登入`，前端留空時不顯示 Google 按鈕。
+- 前端的 `VITE_*` 是 **build-time** 變數：本機 `npm run dev` 讀 `frontend/.env`；容器化的前端要靠 `docker-compose.yml` 的 build arg 並重新 build。
+- Google Cloud Console 的 Authorized JavaScript origins 要登記實際開啟頁面的 origin（`http://localhost:5173`、`http://localhost:3000`；`localhost` 與 `127.0.0.1` 視為不同 origin）。
+
+### 密碼雜湊格式相容，但資料與 token 都不互通
+
+Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜湊格式相容。但兩邊連的是不同資料庫，**使用者要各自註冊**；JWT secret 也不同，**token 不能跨後端使用**。
 
 ## 環境變數
 
@@ -110,11 +140,12 @@ Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜�
 |---|---|
 | `backend/.env` | `dotenv`，範本在根目錄 `.env.example` |
 | `livefit/.env` | Spring Boot 原生 `spring.config.import=optional:file:.env[.properties]`，範本 `livefit/.env.example` |
+| `frontend/.env` | Vite（僅本機 `npm run dev` / `npm run build`），範本 `frontend/.env.example` |
 
 `livefit/.env` 是 **Java properties 格式**：`KEY=value`，不加引號、不寫 `export`（與根目錄那份給 `dotenv` 用的規則不同）。`JWT_SECRET` 必須 **≥32 個位元組**，否則 `JwtTokenProvider` 會在啟動時拋錯。
 
 ## 注意事項
 
 - **`backend/` 的 port 固定 8080，不可更動** —— 前端寫死 `http://127.0.0.1:8080/api/`，Swagger 的 Try it out 與 CI 驗收也都用這個 port。`livefit/` 的 port 由 `.env` 的 `PORT` 控制；兩者若都設 8080 就不能同時啟動
-- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）
+- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）。這條規則是針對 `main` 上的 Node 作業驗收；Spring Boot 分支為了 Google 登入已改過 `frontend/` 與 `docs/openapi.yaml`，**這些改動不要 merge 回 `main`**
 - `POST /api/upload` 是 openapi 標明的加分題，不列入驗收，兩套後端都未實作
