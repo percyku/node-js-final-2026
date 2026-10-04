@@ -159,3 +159,44 @@ cd frontend && npm run dev
 - `frontend/` 與 `docs/openapi.yaml` 的改動**不要 merge 回 `main`**：README 規定這兩個目錄在 Node 作業驗收中不可修改。
 - `fitness` 與 `livefit` 兩個資料庫的資料不互通，帳號要各自註冊。
 - `ddl-auto=update` 只會新增表與欄位；修改既有欄位的型別、長度或 nullable 不會自動套用，需要手動 `ALTER TABLE`。
+
+### 分支狀態
+
+`feature/social-login` 已於 2026-10-04 以 `--no-ff` 合併進 `springboot-backend` 並推上遠端。下圖是合併完成當下的狀態，三個分支的本機與遠端皆同步。
+
+```
+                                                                        feature/social-login
+                                                                        （已合併，分支保留）
+                                                                                 │
+                                              6dad47b ──── 4c02531 ──── 22d85fb ─┤
+                                              後端          前端          文件     │
+                                             ╱                                    ╲
+  ···── 90c7392 ── fba93b9 ── d3e913c ── 039a7d4 ── 6e77bf9 ── 4292ba9 ─────────── d94a1fe
+           │       Spring Boot  移植文件    .gitignore  .claudeignore  README       Merge commit
+           │       後端         CLAUDE.md                                              │
+           │                                                                           │
+          main                                                                springboot-backend
+   Node 版作業，驗收對象                                                        Spring Boot 版
+```
+
+| 分支 | commit | 內容 |
+|---|---|---|
+| `main` | `90c7392` | Node 版作業，GitHub Actions 驗收的對象，這次沒有變動 |
+| `springboot-backend` | `d94a1fe` | Spring Boot 版，已含 Google 登入與獨立資料庫 |
+| `feature/social-login` | `22d85fb` | 這次的三個 commit（後端、前端、文件），合併後保留不刪 |
+
+分支之間的關係：
+
+- `springboot-backend` 比 `main` 多 9 個 commit：5 個是 Spring Boot 移植，3 個是這次的 Google 登入，1 個是 merge commit。
+- `main` 是 `springboot-backend` 的祖先，兩者沒有分岔。**因此 `springboot-backend` 一旦 merge 回 `main` 會直接 fast-forward**，`main` 會整個變成 Spring Boot 版的內容，請勿這樣做。
+- `feature/social-login` 的內容已全部在 `springboot-backend` 裡，兩者只差 merge commit `d94a1fe`。
+
+要撤回這次合併：
+
+```bash
+git checkout springboot-backend
+git revert -m 1 d94a1fe
+git push origin springboot-backend
+```
+
+撤回後 `feature/social-login` 上的實作不受影響。日後若想重新合併，要先把該 revert commit 再 revert 一次，否則 Git 會認為這些 commit 已經合併過而略過。另外，撤回程式碼不會還原資料庫，`livefit` 裡的 `google_sub` 欄位與已建立的 Google 帳號會留著。
