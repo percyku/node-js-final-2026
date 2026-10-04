@@ -6,6 +6,53 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-04 — 註冊與 Google 登入的錯誤回應修正
+
+分支：`fix/user-write-errors`（預計 merge 回 `springboot-backend`）
+
+### 概述
+
+Google 登入上線後檢查出幾個「資料庫約束擋下寫入、但前端收到 500 `伺服器錯誤`」的情況，這次改成回可預期的狀態碼。資料正確性原本就由約束保證，這次只改回應。`backend/`（Node 版）沒有改動，以下情況在 Node 版仍回 500。
+
+### 行為變更
+
+| 端點 | 情況 | 修正前 | 修正後 |
+|---|---|---|---|
+| `POST /api/users/google` | 同一個 Google 帳號首次登入，兩個請求同時到 | 後者 500 | 改用已建好的帳號照常登入，201 |
+| `POST /api/users/google` | 同一瞬間有人用同 email 走密碼註冊 | 500 | 409 `Email 已被使用`（再登入一次會走綁定流程） |
+| `POST /api/users/signup` | 兩個同 email 的註冊同時到 | 後者 500 | 409 `Email 已被使用` |
+| `POST /api/users/signup` | `name` 超過 50 字 | 500 | 400 `欄位未填寫正確` |
+| `PUT /api/users/profile` | `name` 超過 50 字 | 500 | 400 `欄位未填寫正確` |
+
+名稱長度以去除前後空白後的字元數計算（一個 emoji 算一個字），與 `users.name` 的 `varchar(50)` 一致。
+
+### 修改的檔案
+
+| 檔案 | 改動 |
+|---|---|
+| `livefit/.../service/UserService.java` | `signup` 與 `linkOrCreateGoogleUser` 接住 unique 約束衝突後重查；`signup` 拿掉 `@Transactional`；新增 `isValidName` 並套用到註冊與修改名稱 |
+| `docs/springboot-migration-plan.md` | §8 差異表新增第 11、12 列 |
+| `CHANGELOG.md` | 本段 |
+
+### 驗證結果
+
+已驗證：
+
+- `mvn compile` 通過。
+- `npm run test:m2`（註冊、登入、會員資料）對 Spring Boot 版通過。
+
+尚未驗證：
+
+- 併發情境沒有實際重現，修正是依程式邏輯推得。要重現需同時送出兩個相同 email 的註冊，且兩者都要先通過「email 是否已存在」的檢查。
+- 名稱超過 50 字的 400 回應沒有實際打 API 確認。
+
+### 注意事項
+
+- `signup` 與 `googleLogin` 都**刻意不加 `@Transactional`**：重查依賴 `save` 自成一個交易，例外才會在當下丟出。包進外層交易後，例外要到 commit 才出現，而且 postgres 的交易已作廢、無法再查，會退回 500。
+- `docs/` 的改動同樣**不要 merge 回 `main`**。
+
+---
+
 ## 2026-10-04 — Google 第三方登入與獨立資料庫
 
 分支：`feature/social-login`（預計 merge 回 `springboot-backend`）

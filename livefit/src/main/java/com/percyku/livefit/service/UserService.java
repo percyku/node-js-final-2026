@@ -21,6 +21,7 @@ import com.percyku.livefit.repository.UserRepository;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.GoogleIdTokenVerifier.GoogleProfile;
 import com.percyku.livefit.security.JwtTokenProvider;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,10 +57,13 @@ public class UserService {
         this.googleIdTokenVerifier = googleIdTokenVerifier;
     }
 
-    @Transactional
+    /**
+     * 刻意不加 @Transactional：save 自成一個交易，撞到 email 的 unique 約束時例外才會在當下丟出，
+     * 也才能在 catch 裡重查（包在外層交易裡的話，例外要到 commit 才出現，且交易已作廢無法再查）。
+     */
     public SignupResponse signup(SignupRequest request) {
         if (request == null
-                || !ValidUtils.isValidString(request.name())
+                || !isValidName(request.name())
                 || !ValidUtils.isValidString(request.email())
                 || !ValidUtils.isValidString(request.password())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
@@ -79,7 +83,17 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(request.password()));
         user.setRole(User.ROLE_USER);
 
-        User saved = userRepository.save(user);
+        User saved;
+        try {
+            saved = userRepository.save(user);
+        } catch (DataIntegrityViolationException ex) {
+            // 上面查的時候還沒有，但同 email 的另一個請求搶先寫入了
+            if (userRepository.findByEmail(email).isPresent()) {
+                throw ApiException.conflict(ErrorMessages.EMAIL_TAKEN);
+            }
+            // 不是 email 重複（例如欄位超長），維持原本的處理
+            throw ex;
+        }
         return SignupResponse.of(saved.getId(), saved.getName());
     }
 
@@ -111,7 +125,8 @@ public class UserService {
     /**
      * Google 登入：驗證 ID token 後依序以 google_sub、email 對應帳號，都沒有就建立新帳號。
      * 刻意不加 @Transactional：驗證 token 要連 Google 抓公鑰，不該佔著資料庫連線等網路；
-     * 後面每個 repository 呼叫各自是一個交易，重複寫入由 email / google_sub 的 unique 約束擋下。
+     * 後面每個 repository 呼叫各自是一個交易，重複寫入由 email / google_sub 的 unique 約束擋下，
+     * 撞到約束時在 linkOrCreateGoogleUser 重查一次（這也依賴 save 自成一個交易，例外才會在當下丟出）。
      */
     public LoginResponse googleLogin(GoogleLoginRequest request) {
         if (request == null || !ValidUtils.isValidString(request.credential())) {
@@ -152,7 +167,14 @@ public class UserService {
         created.setEmail(email);
         created.setGoogleSub(profile.sub());
         created.setRole(User.ROLE_USER);
-        return userRepository.save(created);
+        try {
+            return userRepository.save(created);
+        } catch (DataIntegrityViolationException ex) {
+            // 同一個 Google 帳號的另一個請求搶先建好了，改用那筆帳號登入，不讓使用者看到 500
+            return userRepository.findByGoogleSub(profile.sub())
+                    // 撞到的是 email（同時有人用這個信箱註冊），照一般的重複註冊處理
+                    .orElseThrow(() -> ApiException.conflict(ErrorMessages.EMAIL_TAKEN));
+        }
     }
 
     /** Google 沒給名稱時用 email 的 @ 前段，並截到 users.name 的長度上限 */
@@ -176,7 +198,7 @@ public class UserService {
 
     @Transactional
     public UpdateNameResponse updateName(UUID userId, UpdateNameRequest request) {
-        if (request == null || !ValidUtils.isValidString(request.name())) {
+        if (request == null || !isValidName(request.name())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
@@ -249,6 +271,19 @@ public class UserService {
                         .toList();
 
         return new UserCoursesResponse(purchased - used, used, bookings);
+    }
+
+    /**
+     * 名稱必填，且去除前後空白後不能超過 users.name 的長度。
+     * Node 版沒有這條檢查；這裡補上是因為超長會讓資料庫寫入失敗而回 500。
+     */
+    private boolean isValidName(String name) {
+        if (!ValidUtils.isValidString(name)) {
+            return false;
+        }
+        String trimmed = name.trim();
+        // varchar(50) 以字元（code point）計，emoji 等補充字元算一個
+        return trimmed.codePointCount(0, trimmed.length()) <= NAME_MAX_LENGTH;
     }
 
     private String normalizeEmail(String email) {
