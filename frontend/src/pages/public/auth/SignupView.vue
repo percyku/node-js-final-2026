@@ -66,6 +66,8 @@
             註冊
           </button>
 
+          <GoogleLoginButton />
+
           <p class="text-center text-sm text-primary-400">
             已有會員?
             <router-link
@@ -93,6 +95,7 @@ import { ref, getCurrentInstance } from "vue";
 import { useRouter } from "vue-router";
 import { postSignup } from "../../../api/index.js";
 import swalHandler from "../../../utils/swalHandler.js";
+import GoogleLoginButton from "../../../components/GoogleLoginButton.vue";
 
 const { proxy } = getCurrentInstance();
 const router = useRouter();

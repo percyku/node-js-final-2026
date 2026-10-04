@@ -36,6 +36,8 @@
             登入
           </button>
 
+          <GoogleLoginButton />
+
           <p class="text-center text-sm text-primary-400">
             還沒有帳號?
             <router-link
@@ -63,13 +65,11 @@ import { ref, getCurrentInstance } from "vue";
 import { useRouter } from "vue-router";
 import { postLogin } from "../../../api/index.js";
 import swalHandler from "../../../utils/swalHandler.js";
-import { setKeyFromCookie } from "../../../utils/cookie.js";
-import { jwtDecode } from "jwt-decode";
-import { useUserStore } from "../../../stores/user.js";
+import { handleLoginSuccess } from "../../../utils/loginHandler.js";
+import GoogleLoginButton from "../../../components/GoogleLoginButton.vue";
 
 const { proxy } = getCurrentInstance();
 const router = useRouter();
-const { setCurrentUser } = useUserStore();
 
 const user = ref({
   email: "",
@@ -80,21 +80,7 @@ async function login() {
   try {
     const { data } = await postLogin(user.value);
 
-    const { role, exp } = jwtDecode(data.token);
-
-    setKeyFromCookie("token", data.token, exp);
-
-    setCurrentUser({
-      name: data.user.name,
-      role,
-    });
-
-    // 根據角色導向不同頁面
-    if (role === "COACH") {
-      router.push("/coach/profile");
-    } else if (role === "USER") {
-      router.push("/user/dashboard");
-    }
+    handleLoginSuccess(data, router);
   } catch (error) {
     let msg = error.message;
 
