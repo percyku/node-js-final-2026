@@ -2,6 +2,7 @@ package com.percyku.livefit.controller;
 
 import com.percyku.livefit.common.ApiResponse;
 import com.percyku.livefit.dto.user.CreditPurchaseResponse;
+import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
 import com.percyku.livefit.dto.user.LoginResponse;
 import com.percyku.livefit.dto.user.ProfileResponse;
@@ -46,6 +47,12 @@ public class UserController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<LoginResponse> login(@RequestBody(required = false) LoginRequest request) {
         return ApiResponse.success(userService.login(request));
+    }
+
+    @PostMapping("/google")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<LoginResponse> googleLogin(@RequestBody(required = false) GoogleLoginRequest request) {
+        return ApiResponse.success(userService.googleLogin(request));
     }
 
     @GetMapping("/profile")

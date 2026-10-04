@@ -70,6 +70,12 @@
 			<version>${jjwt.version}</version>
 			<scope>runtime</scope>
 		</dependency>
+
+		<!-- Google 登入：只用 NimbusJwtDecoder 驗證 Google ID token（RS256 + JWKS），版本由 Boot BOM 管理 -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-oauth2-jose</artifactId>
+		</dependency>
 	</dependencies>
 
 	<build>
