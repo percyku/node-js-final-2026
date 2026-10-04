@@ -260,6 +260,8 @@ request.get(`coaches/?per=${per}&page=${page}`)   // baseURL 為 http://127.0.0.
 | 8 | `DELETE /api/coaches/skill/{id}` 回 `{status:"success"}` 無 data | 依 openapi 回 `data:{raw:[], affected:1}` |
 | 9 | 多支 POST 回 200 而非 201 | 依 openapi 標示（規格書明示 200/201 皆可，維持 openapi 的值） |
 | 10 | `getCoachProfile` 在 coach 資料缺失時 NPE → 500 | 回 400 `找不到該教練` |
+| 11 | 註冊與修改名稱不檢查 `name` 長度，超過 `users.name` 的 `varchar(50)` 時資料庫寫入失敗 → 500 | 去除前後空白後超過 50 字回 400 `欄位未填寫正確` |
+| 12 | 註冊是「先查 email 再寫入」，兩個同 email 的請求同時到時，後者撞 unique 約束 → 500 | 接住約束衝突後重查，回 409 `Email 已被使用`（Google 登入首次建立帳號的併發同理，改用已建好的帳號照常登入） |
 
 **刻意保留的 Node 行為**（openapi 也如此規範，不改）：
 
