@@ -62,7 +62,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 用 POST /api/users/login 拿到的 token
+      description: 用 POST /api/users/login（或 POST /api/users/google）拿到的 token
 
 paths:
   # ===== g1-skill-package =====
@@ -662,6 +662,121 @@ paths:
                   value:
                     status: failed
                     message: 使用者不存在或密碼輸入錯誤
+  /api/users/google:
+    post:
+      tags:
+        - M2 會員系統
+      summary: Google 登入，取得 JWT token（僅 Spring Boot 版）
+      description: |
+        用 Google 帳號登入。前端透過 Google Identity Services 取得 ID token（credential），
+        送到這支 API 由後端驗證，成功後回傳的內容與 POST /api/users/login 完全相同，
+        之後的用法也一樣（放在 Authorization header：Bearer <token>）。
+
+        行為備註：
+        - ⚠️ 這支 API 只有 Spring Boot 版後端（livefit/）有實作，Node 版（backend/）沒有，不列入作業驗收。
+        - 後端會用 Google 的公鑰驗證 credential 的簽章，並檢查發行者（iss）、
+          對象（aud 必須是本專案的 Google Client ID）、有效期限（exp），且 email 必須是 Google 驗證過的（email_verified）。
+        - 帳號對應規則（依序判斷）：
+          1. 這個 Google 帳號以前登入過 → 直接登入原帳號。
+          2. 沒登入過，但 Google 的 Email 已經有人用密碼註冊 → 自動綁定到那個既有帳號並登入。
+             綁定不會動到原本的密碼，之後密碼登入與 Google 登入都能用，也仍然可以修改密碼。
+          3. 都沒有 → 建立新會員（role 固定是 USER、沒有密碼），暱稱取 Google 帳號的名稱（最多 50 字）。
+        - ⚠️ 用 Google 建立的帳號沒有密碼：不能用 POST /api/users/login 登入，也不能用 PUT /api/users/password 修改密碼。
+        - JWT payload 與一般登入相同，必含 { id, role, exp }。
+        - 成功回 data.token 與 data.user.name（只有 name，沒有其他欄位）。
+        - 成功狀態碼是 201，與一般登入一致。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - credential
+              properties:
+                credential:
+                  type: string
+                  description: Google Identity Services 回傳的 ID token（JWT 字串）
+                  example: eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1Njc4OTAiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20ifQ.signature
+            example:
+              credential: eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1Njc4OTAiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20ifQ.signature
+      responses:
+        '201':
+          description: 登入成功，回應格式與 POST /api/users/login 相同
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: 本站的 JWT token（不是 Google 的 token），payload 必含 { id, role, exp }
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBmZDk2YjNjIiwicm9sZSI6IlVTRVIiLCJleHAiOjE3NTAwMDAwMDB9.signature
+                      user:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            example: 小華
+              example:
+                status: success
+                data:
+                  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBmZDk2YjNjIiwicm9sZSI6IlVTRVIiLCJleHAiOjE3NTAwMDAwMDB9.signature
+                  user:
+                    name: 小華
+        '400':
+          description: |
+            登入失敗。
+            - credential 缺漏／空字串：「欄位未填寫正確」
+            - credential 不是合法的 Google ID token（簽章錯誤、已過期、不是發給本專案的、Email 未經 Google 驗證）：「Google 登入驗證失敗」
+            - 後端沒有設定 GOOGLE_CLIENT_ID：「尚未設定 Google 登入」
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: failed
+                  message:
+                    type: string
+              examples:
+                欄位缺漏:
+                  summary: credential 缺漏／空字串
+                  value:
+                    status: failed
+                    message: 欄位未填寫正確
+                驗證失敗:
+                  summary: credential 無法通過驗證
+                  value:
+                    status: failed
+                    message: Google 登入驗證失敗
+                尚未設定:
+                  summary: 後端未設定 Google Client ID
+                  value:
+                    status: failed
+                    message: 尚未設定 Google 登入
+        '409':
+          description: 這個 Email 的帳號已經綁定了另一個 Google 帳號
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: failed
+                  message:
+                    type: string
+              example:
+                status: failed
+                message: Email 已被使用
   /api/users/profile:
     get:
       tags:
@@ -872,7 +987,9 @@ paths:
            不是只檢查新密碼，舊密碼格式不符也會擋 → 400「密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字」
         3. ⚠️ 新密碼跟舊密碼相同會被擋 → 400「新密碼不能與舊密碼相同」
         4. new_password 與 confirm_new_password 不一致 → 400「新密碼與驗證新密碼不一致」
-        5. 舊密碼比對錯誤 → 400「密碼輸入錯誤」
+        5. 用 Google 建立、沒有密碼的帳號 → 400「此帳號使用 Google 登入，無法修改密碼」（僅 Spring Boot 版；
+           先用密碼註冊、之後才綁定 Google 的帳號不受影響，照常可以修改）
+        6. 舊密碼比對錯誤 → 400「密碼輸入錯誤」
         - 成功 200，data 是 null（沒有任何資料要回）。
       security:
         - bearerAuth: []
@@ -927,6 +1044,7 @@ paths:
             - 三欄任一不符密碼規則：「密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字」
             - 新密碼與舊密碼相同：「新密碼不能與舊密碼相同」
             - 新密碼與確認新密碼不一致：「新密碼與驗證新密碼不一致」
+            - 用 Google 建立、沒有密碼的帳號：「此帳號使用 Google 登入，無法修改密碼」
             - 舊密碼比對錯誤：「密碼輸入錯誤」
           content:
             application/json:
@@ -959,6 +1077,11 @@ paths:
                   value:
                     status: failed
                     message: 新密碼與驗證新密碼不一致
+                Google帳號無密碼:
+                  summary: 用 Google 建立的帳號沒有密碼可改（僅 Spring Boot 版）
+                  value:
+                    status: failed
+                    message: 此帳號使用 Google 登入，無法修改密碼
                 舊密碼錯誤:
                   summary: 舊密碼比對錯誤
                   value:

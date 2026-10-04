@@ -328,23 +328,44 @@ test/
 
 行為以 `docs/openapi.yaml` 為準，**通過作業原生的 68 項合約測試**。
 
+另外多了兩項 Node 版沒有的東西：**Google 第三方登入**（`POST /api/users/google`），以及**獨立的資料庫 `livefit`**（不與 Node 版的 `fitness` 共用）。
+
 ## 怎麼跑
 
 需要 JDK 21 與 Maven。
 
 ```bash
-# 1. 啟動資料庫（資料表由 Node 版的 TypeORM 建立，
-#    若 pgData volume 是空的，要先跑一次 backend/ 讓它建表）
+# 1. 啟動資料庫（只啟動 postgres；不要連 Node 版的 backend 容器一起啟動，它會佔用 8080）
 docker compose up -d postgres
 
-# 2. 設定環境變數
+# 2. 建立 Spring Boot 版專用的資料庫（只需做一次；npm run db:reset 之後要重做）
+#    postgres 容器只會自動建立 Node 版用的 fitness
+docker compose exec postgres psql -U student -d fitness -c "CREATE DATABASE livefit"
+
+# 3. 設定環境變數
 cd livefit && cp .env.example .env    # 記得把 JWT_SECRET 換成 32 字元以上的隨機字串
 
-# 3. 啟動
+# 4. 啟動（必須在 livefit/ 下執行，否則讀不到 .env）
 mvn spring-boot:run
 ```
 
+資料表由 Hibernate 在第一次啟動時自動建立（`ddl-auto=update`），**不需要先跑 Node 版**。
+
 port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` 相同，兩者不能同時啟動**；要並行請改成其他 port，例如 8085。
+
+> 沒有安裝 Maven（`command not found: mvn`）時，可以 `brew install maven`，其他做法見 [`CLAUDE.md`](CLAUDE.md)。
+
+### 啟用 Google 登入（選用）
+
+不設定也能正常啟動，只是登入頁不會出現 Google 按鈕。
+
+1. 到 Google Cloud Console 建立 **OAuth 2.0 Client ID（Web application）**，Authorized JavaScript origins 加入 `http://localhost:5173` 與 `http://localhost:3000`。
+2. 把 Client ID 填進兩個地方（必須是同一個值）：
+   - `livefit/.env` 的 `GOOGLE_CLIENT_ID`
+   - `frontend/.env` 的 `VITE_GOOGLE_CLIENT_ID`（從 `frontend/.env.example` 複製）
+3. 啟動前端：`cd frontend && npm install && npm run dev`，瀏覽器開 `http://localhost:5173/login`。
+
+請用 `localhost` 而不是 `127.0.0.1` 開頁面，Google 把兩者視為不同來源。帳號綁定規則見 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 拿作業的測試來驗
 
@@ -360,7 +381,8 @@ API_BASE_URL=http://localhost:8085 npm test     # 跑在其他 port 時
 | 文件 | 內容 |
 |---|---|
 | [`docs/springboot-migration-plan.md`](docs/springboot-migration-plan.md) | 架構設計、28 支 API 的實作重點、Entity 對映、Spring Security 規則，以及與 Node 版的行為差異表 |
-| [`docs/springboot-migration-worklog.md`](docs/springboot-migration-worklog.md) | 變更紀錄與踩坑排查過程 |
+| [`docs/springboot-migration-worklog.md`](docs/springboot-migration-worklog.md) | 移植階段的變更紀錄與踩坑排查過程 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 移植完成之後的功能更新紀錄（Google 登入、獨立資料庫） |
 | [`CLAUDE.md`](CLAUDE.md) | 給 Claude Code 的 repo 開發指引 |
 
 ## 已知限制
@@ -368,4 +390,6 @@ API_BASE_URL=http://localhost:8085 npm test     # 跑在其他 port 時
 - **不含 Dockerfile**，不參與容器化驗收
 - **不含單元測試**，驗證依靠上述的合約測試
 - `POST /api/upload` 是 openapi 標明的選做加分題，兩套後端都未實作
-- `ddl-auto=none`，**不會自動建表**，依賴 Node 版先把 schema 建好
+- `livefit` 資料庫要手動建立一次（見上方步驟 2），之後的資料表才會自動建立
+- 兩個資料庫的資料不互通，Node 版與 Spring Boot 版的帳號要各自註冊
+- Google 登入只有 Spring Boot 版有；為此改過 `frontend/` 與 `docs/openapi.yaml`，**這些改動不要 merge 回 `main`**（作業規定這兩個目錄不可修改）
