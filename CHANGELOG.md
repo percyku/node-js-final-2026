@@ -74,9 +74,12 @@ callback 頁與按鈕元件沒有改，直接沿用 GitHub 那一版。
 - 以真實的 Facebook App（開發模式）在瀏覽器（`http://localhost:5173`）登入：email 與既有帳號不同 → 建立新帳號，名稱取自 Facebook，沒有密碼；`users` 與 `user_identities` 在同一個交易內寫入；既有的 GitHub + Google 帳號沒有被動到。
 - 三個平台的主流程都驗證過後，刪除本機 `livefit` 資料庫的舊欄位 `users.google_sub`：刪除前確認該欄位全為 null，刪除後 `users` 筆數不變，三筆綁定都還在。
 
+- 兩種順序都在瀏覽器以同一個 email 的真實帳號測過：
+  - 先 Google 建立帳號、再用 Facebook 登入 → 回到登入頁並顯示「此 Email 已註冊，請改用原本的方式登入」，沒有登入；資料庫中該帳號仍只有 `GOOGLE` 一筆綁定。
+  - 先 Facebook 建立帳號、再用 Google 登入 → Google 綁進 Facebook 建立的帳號。這符合目前的規則，同時也就是 `docs/springboot-migration-plan.md` §11.7 記錄的已知限制實際發生的樣子。
+
 尚未驗證：
 
-- **「同 email 已有帳號回 409」沒有在瀏覽器測到**（測試用的 Facebook 帳號 email 剛好與既有帳號不同），只在整合測試驗過。這是 Facebook 登入最特別的一條規則。
 - 「Facebook 沒有提供 email」只在單元測試用假造的回應驗過。
 - 授權頁按取消、登入後按上一頁：與 GitHub 共用同一段程式，GitHub 已驗證，Facebook 沒有另外測。
 - 容器版前端（3000 port）沒有測。
