@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `backend/` | Node.js + Express 5 + TypeORM | 正式繳交用，GitHub Actions 驗收的對象 |
 | `livefit/` | Spring Boot 3.5 + Spring Data JPA + Spring Security | `springboot-backend` 分支上的移植版，不列入作業驗收 |
 
-兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
+兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub、Facebook 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
 
 ## 規格的唯一來源
 
@@ -142,6 +142,18 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 - 前端送來的 `redirect_uri` 必須在 `OAUTH_REDIRECT_URIS` 白名單內，且與 GitHub OAuth App 登記的 callback URL 完全相同（`http://localhost:5173/oauth/callback/github`）。容器版前端（3000）能否共用同一個 OAuth App 尚未實測，不行就另建一個。
 - `GithubOAuthClient` 的逾時（連線 2 秒、讀取 3 秒）是配合前端 axios 的 10 秒設的，調高前先算三次呼叫的總和。
 - 加新的 authorization code 平台：後端加一個 `XxxOAuthClient` 回傳 `SocialProfile` 與一個 `UserIdentity.PROVIDER_*` 常數；前端在 `config/oauthProviders.js` 加一筆、在 `SocialLoginButtons.vue` 加一個按鈕、在 `routeTable.js` 的白名單加路徑。
+
+### Facebook 登入（僅 `livefit/`）
+
+`POST /api/users/facebook`，流程與 GitHub 相同，`UserService` 裡兩者共用 `oauthCodeLogin`，只差在 `security/FacebookOAuthClient`（連 Facebook 兩次：換 token、`/me`）。
+
+- **Facebook 不提供 email 是否驗證過的旗標**，`FacebookOAuthClient` 一律回 `emailVerified=false`。結果是：登入過的 Facebook 帳號照常登入、全新的 email 會建立帳號，但 **email 已有帳號時回 409 `此 Email 已註冊，請改用原本的方式登入`，不自動綁定**。不要為了方便把它改成 true，那等於讓人用未驗證的信箱接管帳號。
+- 反方向的接管（先用未驗證信箱建帳號，等本人用 Google/GitHub 登入後被綁進來）是**已知限制**，密碼註冊也有同樣的洞，見 `docs/springboot-migration-plan.md` §11.7。
+- Facebook 帳號可能沒有 email，這時回 400；`users.email` 不可為 null。
+- 換 token 是 GET、**密鑰在 query string**，不要把完整網址寫進 log。
+- Graph API 版本 `v26.0` 寫在兩處（`FacebookOAuthClient` 與前端 `config/oauthProviders.js`），要一起改。
+- `FACEBOOK_APP_ID`（後端）與 `VITE_FACEBOOK_APP_ID`（前端）必須相同；`FACEBOOK_APP_SECRET` 只放後端。
+- Facebook App 在開發模式下只有具應用程式角色的帳號能登入。
 
 ### 密碼雜湊格式相容，但資料與 token 都不互通
 

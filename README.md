@@ -328,7 +328,7 @@ test/
 
 行為以 `docs/openapi.yaml` 為準，**通過作業原生的 68 項合約測試**。
 
-另外多了 Node 版沒有的東西：**Google 與 GitHub 第三方登入**（`POST /api/users/google`、`POST /api/users/github`），以及**獨立的資料庫 `livefit`**（不與 Node 版的 `fitness` 共用）。
+另外多了 Node 版沒有的東西：**Google、GitHub、Facebook 第三方登入**（`POST /api/users/google`、`/github`、`/facebook`），以及**獨立的資料庫 `livefit`**（不與 Node 版的 `fitness` 共用）。
 
 ## 怎麼跑
 
@@ -380,6 +380,22 @@ port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` �
 3. 重新啟動後端與前端，瀏覽器開 `http://localhost:5173/login`。
 
 上面登記的是本機開發用的 5173。容器版前端（`http://localhost:3000`）能否共用同一個 OAuth App 尚未實測；登入時若 GitHub 顯示 redirect_uri 不符，就為 3000 另建一個 App。GitHub 帳號必須有一個**主要且驗證過**的 email 才能登入。
+
+### 啟用 Facebook 登入（選用）
+
+不設定也能正常啟動，只是登入頁不會出現 Facebook 按鈕。
+
+1. 到 [Meta for Developers](https://developers.facebook.com/apps/creation/) 建立應用程式，使用案例選 Facebook 登入（用來驗證用戶並索取資料的那一項）。
+2. 在該使用案例的權限設定中加入 `email`（`public_profile` 預設就有）。
+3. Facebook 登入的設定頁 → 「有效的 OAuth 重新導向 URI」填 `http://localhost:5173/oauth/callback/facebook`。
+4. 應用程式設定 → 基本資料，取得應用程式編號與應用程式密鑰，填進設定檔：
+   - `livefit/.env` 的 `FACEBOOK_APP_ID` 與 `FACEBOOK_APP_SECRET`
+   - `frontend/.env` 的 `VITE_FACEBOOK_APP_ID`（與上面的編號相同；**密鑰不要放前端**）
+5. 重新啟動後端與前端。
+
+應用程式在**開發模式**下只有具應用程式角色的帳號（管理員、開發人員、測試人員）能登入，自己測試用建立 App 的那個 Facebook 帳號即可。
+
+Facebook 不會告訴我們 email 是否驗證過，所以它**不會自動綁定既有帳號**：同一個 email 已經用密碼、Google 或 GitHub 註冊過時，Facebook 登入會回「此 Email 已註冊，請改用原本的方式登入」。Facebook 帳號沒有 email 時也無法登入。
 
 ## 拿作業的測試來驗
 
