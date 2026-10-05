@@ -12,7 +12,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.Instant;
 import java.util.UUID;
 
-/** 對應 backend/entities/User.js，table: users（另外多了 Google 登入用的 google_sub） */
+/** 對應 backend/entities/User.js，table: users（第三方登入的綁定資料在 user_identities） */
 @Entity
 @Table(name = "users")
 public class User {
@@ -31,13 +31,9 @@ public class User {
     @Column(name = "email", length = 320, nullable = false, unique = true)
     private String email;
 
-    /** 純 Google 註冊的帳號沒有密碼，此時為 null */
+    /** 純第三方登入建立的帳號沒有密碼，此時為 null */
     @Column(name = "password", length = 255)
     private String password;
-
-    /** Google 帳號的唯一識別碼（ID token 的 sub），未綁定 Google 時為 null */
-    @Column(name = "google_sub", length = 255, unique = true)
-    private String googleSub;
 
     @Column(name = "role", length = 20, nullable = false)
     private String role = ROLE_USER;
@@ -58,8 +54,6 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
-    public String getGoogleSub() { return googleSub; }
-    public void setGoogleSub(String googleSub) { this.googleSub = googleSub; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
     public Instant getCreatedAt() { return createdAt; }

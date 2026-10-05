@@ -50,6 +50,7 @@ cd backend && npm start           # CI 驗收用的啟動方式
 export JAVA_HOME=~/Library/Java/JavaVirtualMachines/temurin-21.0.11/Contents/Home
 cd livefit && mvn spring-boot:run      # 必須在 livefit/ 下執行，否則讀不到 .env
 cd livefit && mvn -DskipTests compile
+cd livefit && mvn test                # 第三方登入的整合測試，需要 postgres 與 livefit 資料庫在線
 ```
 
 > **本機 JDK 陷阱**：`/Library/Java/JavaVirtualMachines/` 下的 JDK 都是 x86 版，在 Apple Silicon 上會回 `bad CPU type`。只有 `~/Library/Java/JavaVirtualMachines/temurin-21.0.11` 可用。`JAVA_HOME` 每開一個新終端機都要重新 export，或直接寫進 `~/.zshrc`。
@@ -99,7 +100,7 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 - 兩個資料庫的資料不互通，帳號要各自註冊。
 - `ddl-auto=update` 只增不改：新增欄位會自動補上，但改欄位型別、長度、nullable 不會套用到既有的表，需要手動 `ALTER TABLE`。
 
-容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users` 表比 Node 版多一個 `google_sub`，且 `password` 可為 null。
+容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users.password` 可為 null，並多一張 `user_identities` 表記錄第三方登入的綁定（`provider` + `provider_user_id`）；`users.google_sub` 是搬移前的舊欄位，Entity 已不對映，待其他平台登入完成後才刪除。
 
 ### 兩套後端的分層差異
 
@@ -124,7 +125,8 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 
 `POST /api/users/google` 收前端 Google Identity Services 給的 ID token（`credential`），由 `security/GoogleIdTokenVerifier` 用 Google 公鑰驗簽後，簽發與一般登入**相同格式**的自家 JWT。後端維持 STATELESS，沒有 redirect / session 流程，也不需要 client secret。
 
-- **各帳號能做什麼只看 `users.password` 是否為 null**，與有沒有綁 Google 無關。先用密碼註冊、之後用同 email 的 Google 登入會自動綁定（只寫入 `google_sub`，密碼保留），兩種登入與修改密碼都照常可用。純 Google 建立的帳號 `password` 為 null，密碼登入與修改密碼都回 400。**新增任何會讀 `user.getPassword()` 的邏輯時要處理 null**。
+- **各帳號能做什麼只看 `users.password` 是否為 null**，與有沒有綁 Google 無關。先用密碼註冊、之後用同 email 的 Google 登入會自動綁定（只在 `user_identities` 新增一筆，密碼保留），兩種登入與修改密碼都照常可用。純 Google 建立的帳號 `password` 為 null，密碼登入與修改密碼都回 400。**新增任何會讀 `user.getPassword()` 的邏輯時要處理 null**。
+- 帳號對應邏輯在 `UserService.socialLogin`，各平台共用：驗證完組成 `SocialProfile` 交給它即可。`provider` 用 `UserIdentity.PROVIDER_*` 字串常數，**不要改成 enum**（Hibernate 會建 check 約束，`ddl-auto=update` 不會更新它）。
 - 綁定既有帳號的前提是 Google 回傳 `email_verified=true`，這個檢查不能拿掉，否則能用未驗證的信箱接管別人的帳號。
 - `GOOGLE_CLIENT_ID`（後端）與 `VITE_GOOGLE_CLIENT_ID`（前端）必須是**同一個值**；後端留空時端點回 400 `尚未設定 Google 登入`，前端留空時不顯示 Google 按鈕。
 - 前端的 `VITE_*` 是 **build-time** 變數：本機 `npm run dev` 讀 `frontend/.env`；容器化的前端要靠 `docker-compose.yml` 的 build arg 並重新 build。

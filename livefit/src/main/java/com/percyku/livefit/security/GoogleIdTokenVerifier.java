@@ -3,6 +3,7 @@ package com.percyku.livefit.security;
 import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.config.GoogleProperties;
+import com.percyku.livefit.entity.UserIdentity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
@@ -45,7 +46,7 @@ public class GoogleIdTokenVerifier {
         this.decoder = jwtDecoder;
     }
 
-    public GoogleProfile verify(String credential) {
+    public SocialProfile verify(String credential) {
         if (clientId.isEmpty()) {
             throw ApiException.badRequest(ErrorMessages.GOOGLE_NOT_CONFIGURED);
         }
@@ -58,13 +59,11 @@ public class GoogleIdTokenVerifier {
             throw ApiException.badRequest(ErrorMessages.GOOGLE_VERIFY_FAILED);
         }
 
-        return new GoogleProfile(
+        return new SocialProfile(
+                UserIdentity.PROVIDER_GOOGLE,
                 jwt.getSubject(),
                 jwt.getClaimAsString("email"),
                 Boolean.TRUE.equals(jwt.getClaimAsBoolean("email_verified")),
                 jwt.getClaimAsString("name"));
-    }
-
-    public record GoogleProfile(String sub, String email, boolean emailVerified, String name) {
     }
 }
