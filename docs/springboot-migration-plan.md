@@ -384,7 +384,7 @@ M1～M6 與 smoke 全部通過，代表 Spring Boot 版與 Node 版在驗收層�
 | `pom.xml` | 新增 `spring-security-oauth2-jose`（只用 `NimbusJwtDecoder`） |
 | `security/GoogleIdTokenVerifier` | 以 Google JWKS 驗簽，檢查 `exp`、`iss`、`aud`（= `GOOGLE_CLIENT_ID`） |
 | `config/GoogleProperties` | `google.client-id` ← 環境變數 `GOOGLE_CLIENT_ID` |
-| `entity/User` | `password` 改為可 null；新增 `google_sub`（unique） |
+| `entity/User` | `password` 改為可 null；新增 `google_sub`（unique，§11.5 起改存 `user_identities`） |
 | `UserService.googleLogin` | 帳號對應邏輯（見下） |
 | `SecurityConfig` | matcher 不需改，`anyRequest().permitAll()` 已涵蓋 |
 
@@ -400,7 +400,7 @@ M1～M6 與 smoke 全部通過，代表 Spring Boot 版與 Node 版在驗收層�
 |---|---|---|---|
 | 密碼註冊、未綁 Google | ✅ | 首次使用時自動綁定 | ✅ |
 | 密碼註冊、已綁 Google | ✅ | ✅ | ✅ |
-| 純 Google 建立 | ❌ 400 `使用者不存在或密碼輸入錯誤` | ✅ | ❌ 400 `此帳號使用 Google 登入，無法修改密碼` |
+| 純 Google 建立 | ❌ 400 `使用者不存在或密碼輸入錯誤` | ✅ | ❌ 400 `此帳號使用第三方登入，無法修改密碼` |
 
 `googleLogin` 刻意不加 `@Transactional`：驗證 token 要連 Google 抓公鑰，不該佔著資料庫連線等網路。
 
@@ -417,3 +417,37 @@ M1～M6 與 smoke 全部通過，代表 Spring Boot 版與 Node 版在驗收層�
 - `\d users` 確認 `password` 可 null、`google_sub` 有 unique 約束、時間欄位為 `timestamp without time zone`；`fitness.users` 未被更動。
 - `POST /api/users/google`：空 body → 400 `欄位未填寫正確`；未設定 Client ID → 400 `尚未設定 Google 登入`；偽造簽章或格式錯誤的 token → 400 `Google 登入驗證失敗`。
 - 真實 Google 帳號的登入、綁定流程需要有效的 Client ID，須在瀏覽器手動驗證。
+
+### 11.5 第三方登入共用層（`refactor/social-identity`）
+
+為了之後加 GitHub、Facebook，把 Google 專用的帳號對應抽成各平台共用。**對外行為不變**，唯一的差別是無密碼帳號修改密碼時的訊息（見下）。
+
+| 檔案 | 內容 |
+|---|---|
+| `entity/UserIdentity`、`repository/UserIdentityRepository` | 新表 `user_identities`：`user_id`（FK）、`provider`、`provider_user_id`；unique(`provider`, `provider_user_id`) 與 unique(`user_id`, `provider`) |
+| `entity/User`、`UserRepository` | 移除 `googleSub` 與 `findByGoogleSub` |
+| `security/SocialProfile` | 各平台驗證後統一的使用者資料：`provider, subject, email, emailVerified, name`，取代 `GoogleIdTokenVerifier.GoogleProfile` |
+| `UserService.socialLogin` | 原 `linkOrCreateGoogleUser` 的通用版，`googleLogin` 驗完 token 後呼叫它 |
+| `ErrorMessages` | `GOOGLE_ACCOUNT_NO_PASSWORD` → `SOCIAL_ACCOUNT_NO_PASSWORD`，文字改為 `此帳號使用第三方登入，無法修改密碼` |
+| `pom.xml`、`src/test/` | 新增 `spring-boot-starter-test` 與 `UserServiceSocialLoginTest` |
+
+設計上的幾個決定：
+
+- **`provider` 是字串常數（`UserIdentity.PROVIDER_*`）而非 enum**。Hibernate 6 會替 enum 欄位建 check 約束，`ddl-auto=update` 之後不會更新它，新增平台時寫入會失敗。
+- **`googleLogin` 仍自己擋掉 `email_verified=false`**（400 `Google 登入驗證失敗`），不交給 `socialLogin`。`socialLogin` 對未驗證 email 的處理是「不綁定既有帳號、但可建立新帳號」，那是留給不提供驗證旗標的平台用的。
+- **寫入用 `TransactionTemplate` 包成一個小交易**（建立帳號要寫 `users` 與 `user_identities` 兩張表），unique 約束衝突在交易**外面**接住後重查。外層方法仍不加 `@Transactional`。
+- **交易內發現帳號已綁過同一個平台時，要再查一次是不是同一個平台帳號**：是的話代表另一個請求剛搶先綁好，直接登入；不是才回 409。少了這一步，同一個人連點兩下就會有一個請求收到 409。
+
+資料搬移：`ddl-auto=update` 會建新表，但不會搬資料。新版啟動一次後手動執行（可重複執行）：
+
+```sql
+INSERT INTO user_identities (id, user_id, provider, provider_user_id, created_at)
+SELECT gen_random_uuid(), id, 'GOOGLE', google_sub, now()
+FROM users u
+WHERE google_sub IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'GOOGLE');
+```
+
+`users.google_sub` 欄位**暫時保留**（Entity 已不對映，不影響寫入），這樣 revert 時舊程式碼仍可運作。等 GitHub、Facebook 登入都完成後再 `ALTER TABLE users DROP COLUMN google_sub`。
+
+測試：`cd livefit && mvn test`。`UserServiceSocialLoginTest` 把 `GoogleIdTokenVerifier` 換成假的，其餘走真的 `livefit` 資料庫（**需要 postgres 在線**），用隨機 email 並在結束後刪掉自己建的資料。

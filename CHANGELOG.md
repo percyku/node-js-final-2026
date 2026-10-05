@@ -6,6 +6,64 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-05 — 第三方登入共用層
+
+分支：`refactor/social-identity`（預計 merge 回 `springboot-backend`）
+
+### 概述
+
+為了之後加 GitHub、Facebook 登入，把 Google 專用的帳號對應抽成各平台共用：綁定資料從 `users.google_sub` 搬到新表 `user_identities`，`linkOrCreateGoogleUser` 改成通用的 `socialLogin`。這次是重構，Google 登入的行為不變。`backend/`（Node 版）與 `frontend/` 沒有改動。
+
+### 行為變更
+
+| 端點 | 情況 | 修改前 | 修改後 |
+|---|---|---|---|
+| `PUT /api/users/password` | 純第三方登入建立、沒有密碼的帳號 | 400 `此帳號使用 Google 登入，無法修改密碼` | 400 `此帳號使用第三方登入，無法修改密碼` |
+
+前端沒有比對這句文字，只是原樣顯示。
+
+### 修改的檔案
+
+| 檔案 | 改動 |
+|---|---|
+| `livefit/.../entity/UserIdentity.java` | 新增，table `user_identities` |
+| `livefit/.../repository/UserIdentityRepository.java` | 新增 |
+| `livefit/.../security/SocialProfile.java` | 新增，取代 `GoogleIdTokenVerifier.GoogleProfile` |
+| `livefit/.../entity/User.java`、`repository/UserRepository.java` | 移除 `googleSub`、`findByGoogleSub` |
+| `livefit/.../service/UserService.java` | `linkOrCreateGoogleUser` → `socialLogin` / `linkOrCreateSocialUser`；寫入改用 `TransactionTemplate` |
+| `livefit/.../common/ErrorMessages.java` | `GOOGLE_ACCOUNT_NO_PASSWORD` → `SOCIAL_ACCOUNT_NO_PASSWORD` |
+| `livefit/pom.xml`、`livefit/src/test/.../UserServiceSocialLoginTest.java` | 新增 `spring-boot-starter-test` 與 7 項整合測試 |
+| `docs/openapi.yaml` | `PUT /api/users/password` 的訊息文字 |
+| `docs/springboot-migration-plan.md` | 新增 §11.5 |
+| `CLAUDE.md`、`CHANGELOG.md` | 同步更新 |
+
+### 資料搬移（既有環境要手動執行一次）
+
+新版啟動一次讓 Hibernate 建出 `user_identities` 後執行，SQL 見 `docs/springboot-migration-plan.md` §11.5。`users.google_sub` 欄位這次**不刪**，留到其他平台登入完成後再處理。
+
+沒有執行的話，既有 Google 使用者下次登入會經由 email 重新綁定，不會登不進去；但不要依賴這一點。
+
+### 驗證結果
+
+已驗證：
+
+- 根目錄 68 項合約測試對 Spring Boot 版全數通過。
+- `mvn test` 7 項通過（連跑 5 次）：首次登入建立帳號、再次登入同一帳號、綁定既有密碼帳號且密碼保留、已綁定另一個 Google 帳號回 409、未驗證 email 回 400、無密碼帳號改密碼回 400，以及「同時首次登入」「同時綁定」兩種併發（各 8 個執行緒，全部成功且只產生一筆綁定）。
+- 本機 `livefit` 資料庫原有的 1 筆 Google 綁定已搬到 `user_identities`，`provider_user_id` 與原 `google_sub` 相同、指向同一個使用者。
+- `POST /api/users/google`：空 body → 400 `欄位未填寫正確`；格式錯誤的 token → 400 `Google 登入驗證失敗`。
+
+尚未驗證：
+
+- 沒有用真實 Google 帳號在瀏覽器登入。整合測試裡的 `GoogleIdTokenVerifier` 是假的，驗簽那一段這次沒有動，但也沒有重測。
+
+### 注意事項
+
+- `mvn test` 連的是真的 `livefit` 資料庫，postgres 沒開會失敗。平常編譯仍用 `mvn -DskipTests compile`。
+- 併發測試第一次跑就抓到一個問題：同時綁定時，後到的請求在交易內看到「這個帳號已綁過 Google」就回了 409，但綁上去的其實就是同一個 Google 帳號。現在會再查一次確認，是同一個就直接登入。
+- `docs/` 的改動同樣**不要 merge 回 `main`**。
+
+---
+
 ## 2026-10-04 — 註冊與 Google 登入的錯誤回應修正
 
 分支：`fix/user-write-errors`（預計 merge 回 `springboot-backend`）
