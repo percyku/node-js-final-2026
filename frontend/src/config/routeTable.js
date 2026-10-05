@@ -1,5 +1,5 @@
 export const ROUTE_TABLE = {
-  "post-users": ["/signup", "/login", "/google", "/github"],
+  "post-users": ["/signup", "/login", "/google", "/github", "/facebook"],
   "get-courses": true,
   "get-credit-package": true,
   "post-credit-package": true,

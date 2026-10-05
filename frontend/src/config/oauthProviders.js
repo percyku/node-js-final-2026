@@ -1,4 +1,4 @@
-import { postGithubLogin } from "../api/index.js";
+import { postGithubLogin, postFacebookLogin } from "../api/index.js";
 
 // 走 authorization code 流程的第三方登入：按鈕整頁導向 authorizeUrl，
 // 平台授權後帶著 code 跳回 /oauth/callback/:provider，再由 login 把 code 交給後端。
@@ -10,6 +10,14 @@ export const OAUTH_PROVIDERS = {
     authorizeUrl: "https://github.com/login/oauth/authorize",
     scope: "read:user user:email",
     login: postGithubLogin,
+  },
+  facebook: {
+    label: "Facebook",
+    clientId: import.meta.env.VITE_FACEBOOK_APP_ID,
+    // Graph API 版本與後端 FacebookOAuthClient 相同
+    authorizeUrl: "https://www.facebook.com/v26.0/dialog/oauth",
+    scope: "public_profile,email",
+    login: postFacebookLogin,
   },
 };
 

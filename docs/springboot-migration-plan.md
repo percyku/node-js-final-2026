@@ -490,3 +490,58 @@ GitHub 不像 Google 會給前端一張可離線驗簽的 ID token，所以走 a
 - `config/routeTable.js`：`post-users` 白名單加入 `/github`。
 
 測試：`GithubOAuthClientTest` 用 `MockRestServiceServer` 假造 GitHub 的回應（不連線、不需要資料庫）；`UserServiceSocialLoginTest` 多了三項 GitHub 的情境。
+
+### 11.7 Facebook 登入（`POST /api/users/facebook`）
+
+流程與 GitHub（§11.6）完全相同，共用 callback 頁、按鈕元件、`OAuthCodeLoginRequest` 與 `OAUTH_REDIRECT_URIS` 白名單；`UserService` 裡兩者共用 `oauthCodeLogin`，只差在用哪一個 client 換使用者資料。
+
+| 檔案 | 內容 |
+|---|---|
+| `security/FacebookOAuthClient` | 連 Facebook 兩次：`GET /oauth/access_token` 換 token、`GET /me?fields=id,name,email` |
+| `security/OAuthRestClients` | 從 `GithubOAuthClient` 抽出的逾時設定（連線 2 秒、讀取 3 秒），兩個 client 共用 |
+| `config/FacebookProperties` | `FACEBOOK_APP_ID`、`FACEBOOK_APP_SECRET` |
+| `UserService.facebookLogin` | 與 `githubLogin` 共用 `oauthCodeLogin` |
+
+**與 Google、GitHub 最大的不同：Facebook 不提供 email 是否驗證過的旗標。** `FacebookOAuthClient` 因此一律回傳 `emailVerified=false`，`socialLogin` 的處理是：
+
+| 情況 | 結果 |
+|---|---|
+| 這個 Facebook 帳號登入過 | 直接登入（以 Facebook 的使用者 id 對應，與 email 無關） |
+| 沒登入過，email 也沒人用 | 建立無密碼的新帳號 |
+| 沒登入過，但 email 已有帳號 | 409 `此 Email 已註冊，請改用原本的方式登入`，**不綁定** |
+
+第三種情況不自動綁定，是為了守住「未驗證的信箱不能接管既有帳號」：否則任何人只要在 Facebook 填上別人的信箱，就能登入那個人的帳號。
+
+其他細節：
+
+- **Facebook 帳號可能沒有 email**（用手機號碼註冊，或使用者在授權頁取消提供 email）。`users.email` 不可為 null，所以回 400 `此 Facebook 帳號沒有提供 Email，無法登入`。
+- **換 token 是 GET，密鑰在 query string 裡。** `RestClient` 的例外訊息只含狀態碼與回應內容（連線失敗時也會去掉 query），所以 log 不會印出密鑰；改動這段的錯誤處理時不要把完整網址寫進 log。
+- **Graph API 版本寫死為 `v26.0`**（後端 `FacebookOAuthClient` 與前端 `config/oauthProviders.js` 各一處）。每個版本約在推出兩年後停用，停用後的請求會被自動導到最舊的可用版本，不會直接壞掉，但升級時兩處要一起改。
+- **Facebook App 在開發模式下只有具有應用程式角色的人（管理員、開發人員、測試人員）能登入**，其他人會看到錯誤頁。要開放給所有人得把 App 切到上線模式，那需要隱私權政策網址等資料。
+- 授權頁按取消時，Facebook 帶回的是 `error=access_denied`，前端 callback 頁與 GitHub 共用同一段處理。
+
+#### 已知限制：反方向的帳號接管
+
+上面的規則只擋住「用未驗證的信箱**綁進**既有帳號」。反過來的順序擋不住：
+
+1. 攻擊者在 Facebook 把信箱填成受害者的（Facebook 不保證驗證過），用它登入本站 → 建立一個以受害者信箱為 email 的帳號。
+2. 受害者之後用 Google 或 GitHub（信箱已驗證）登入 → 依規則自動綁進那個帳號。
+3. 攻擊者仍可用 Facebook 登入同一個帳號。
+
+**這個問題不是 Facebook 登入帶進來的**：一般註冊（`POST /api/users/signup`）同樣不驗證信箱，攻擊者用密碼註冊受害者的信箱也是一樣的結果。要根治得做信箱驗證信，並且只讓「信箱驗證過的帳號」接受自動綁定；這超出這份作業的範圍，所以只記錄、不處理。正式上線的服務不能這樣做。
+
+#### `users.google_sub` 欄位
+
+§11.5 保留下來的舊欄位，Entity 已不對映。只有在 §11.5 之前就建好的資料庫才有它；全新建立的資料庫不會有。三個平台都驗證過之後刪除（本機的 `livefit` 已於 2026-10-05 執行）：
+
+```sql
+-- 先確認沒有還沒搬到 user_identities 的資料，應該回 0
+SELECT count(*) FROM users u
+WHERE google_sub IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM user_identities i
+                  WHERE i.user_id = u.id AND i.provider = 'GOOGLE' AND i.provider_user_id = u.google_sub);
+
+ALTER TABLE users DROP COLUMN google_sub;
+```
+
+刪除後就無法 revert 回 §11.5 之前的程式碼（舊版會找不到欄位）。

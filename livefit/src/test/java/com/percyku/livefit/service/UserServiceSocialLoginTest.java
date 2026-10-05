@@ -11,6 +11,7 @@ import com.percyku.livefit.entity.User;
 import com.percyku.livefit.entity.UserIdentity;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.FacebookOAuthClient;
 import com.percyku.livefit.security.GithubOAuthClient;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.SocialProfile;
@@ -62,6 +63,8 @@ class UserServiceSocialLoginTest {
     private GoogleIdTokenVerifier googleIdTokenVerifier;
     @MockitoBean
     private GithubOAuthClient githubOAuthClient;
+    @MockitoBean
+    private FacebookOAuthClient facebookOAuthClient;
 
     private final List<String> createdEmails = new ArrayList<>();
 
@@ -196,6 +199,39 @@ class UserServiceSocialLoginTest {
     }
 
     @Test
+    void 沒登入過的Facebook帳號會建立無密碼帳號_再次登入是同一個帳號() {
+        String email = newEmail();
+        String facebookId = "fb-" + UUID.randomUUID();
+
+        assertThat(userService.facebookLogin(
+                new OAuthCodeLoginRequest(facebookCode(facebookId, email, "王小明"), REDIRECT_URI)).user().name())
+                .isEqualTo("王小明");
+        User created = userRepository.findByEmail(email).orElseThrow();
+        assertThat(created.getPassword()).isNull();
+
+        // 授權碼每次都不同，但同一個 Facebook 帳號要對到同一個使用者
+        userService.facebookLogin(
+                new OAuthCodeLoginRequest(facebookCode(facebookId, email, "王小明"), REDIRECT_URI));
+        assertThat(identitiesOf(created)).extracting(UserIdentity::getProvider)
+                .containsExactly(UserIdentity.PROVIDER_FACEBOOK);
+    }
+
+    @Test
+    void Facebook的email已有帳號時回409_不會自動綁定() {
+        String email = newEmail();
+        userService.signup(new SignupRequest("密碼使用者", email, PASSWORD));
+
+        String code = facebookCode("fb-" + UUID.randomUUID(), email, "冒用者");
+        assertThatThrownBy(() -> userService.facebookLogin(new OAuthCodeLoginRequest(code, REDIRECT_URI)))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(409);
+                    assertThat(ex.getMessage()).isEqualTo(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
+                });
+
+        assertThat(identitiesOf(userRepository.findByEmail(email).orElseThrow())).isEmpty();
+    }
+
+    @Test
     void redirect_uri不在白名單時回400_不會拿code去換token() {
         assertThatThrownBy(() -> userService.githubLogin(
                 new OAuthCodeLoginRequest("any-code", "https://evil.example.com/oauth/callback/github")))
@@ -221,6 +257,14 @@ class UserServiceSocialLoginTest {
     }
 
     /** 回傳一個假的授權碼，交給 githubLogin 時會被「換」成指定的使用者資料 */
+    private String facebookCode(String facebookId, String email, String name) {
+        String code = "code-" + UUID.randomUUID();
+        // Facebook 不提供 email 是否驗證過的旗標，FacebookOAuthClient 一律回 false
+        when(facebookOAuthClient.fetchProfile(code, REDIRECT_URI)).thenReturn(
+                new SocialProfile(UserIdentity.PROVIDER_FACEBOOK, facebookId, email, false, name));
+        return code;
+    }
+
     private String githubCode(String githubId, String email, String name) {
         String code = "code-" + UUID.randomUUID();
         when(githubOAuthClient.fetchProfile(code, REDIRECT_URI)).thenReturn(

@@ -9,9 +9,10 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_API_BASE_URL=http://127.0.0.1:8080/api/
-        # Google / GitHub 登入（僅 Spring Boot 版後端支援）；未設定時前端不顯示對應的按鈕
+        # Google / GitHub / Facebook 登入（僅 Spring Boot 版後端支援）；未設定時前端不顯示對應的按鈕
         - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID:-}
         - VITE_GITHUB_CLIENT_ID=${VITE_GITHUB_CLIENT_ID:-}
+        - VITE_FACEBOOK_APP_ID=${VITE_FACEBOOK_APP_ID:-}
     ports:
       - "3000:80"
 

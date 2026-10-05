@@ -6,6 +6,92 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-05 — Facebook 登入
+
+分支：`feature/facebook-login`（預計 merge 回 `springboot-backend`）
+
+### 概述
+
+Spring Boot 版新增 Facebook 登入，流程與 GitHub 相同（authorization code），共用 callback 頁、按鈕元件與 `redirect_uri` 白名單。最大的差別是 Facebook 不提供 email 是否驗證過的旗標，所以**不會自動綁定既有帳號**。`backend/`（Node 版）沒有改動。
+
+### 行為規則
+
+`POST /api/users/facebook`，body 為 `{ code, redirect_uri }`，成功回 201，內容與一般登入相同。
+
+| 情況 | 回應 |
+|---|---|
+| 這個 Facebook 帳號登入過 | 201，登入原帳號 |
+| 沒登入過，email 也沒人用 | 201，建立無密碼的新帳號 |
+| 沒登入過，但 email 已有帳號（密碼、Google、GitHub 建立的都算） | 409 `此 Email 已註冊，請改用原本的方式登入`，不綁定 |
+| `code` 缺漏，或 `redirect_uri` 缺漏／不在白名單內 | 400 `欄位未填寫正確` |
+| 後端沒設定 `FACEBOOK_APP_ID` 或 `FACEBOOK_APP_SECRET` | 400 `尚未設定 Facebook 登入` |
+| `code` 無效、用過、過期，或連不上 Facebook | 400 `Facebook 登入驗證失敗` |
+| Facebook 帳號沒有 email，或使用者沒同意提供 | 400 `此 Facebook 帳號沒有提供 Email，無法登入` |
+
+### 後端（`livefit/`）
+
+| 檔案 | 改動 |
+|---|---|
+| `security/FacebookOAuthClient.java` | 新增。換 token、取 `/me`；一律回傳 `emailVerified=false` |
+| `security/OAuthRestClients.java` | 新增。從 `GithubOAuthClient` 抽出的逾時設定，兩個 client 共用 |
+| `security/GithubOAuthClient.java` | 改用 `OAuthRestClients`，行為不變 |
+| `config/FacebookProperties.java` | 新增 |
+| `service/UserService.java` | 新增 `facebookLogin`；`githubLogin` 的內容抽成兩者共用的 `oauthCodeLogin`；未驗證 email 撞到既有帳號時的訊息改為專用的一句 |
+| `controller/UserController.java` | 新增 `POST /api/users/facebook` |
+| `config/SecurityConfig.java` | 註冊 `FacebookProperties`（matcher 沒改） |
+| `entity/UserIdentity.java`、`common/ErrorMessages.java` | 新增 `PROVIDER_FACEBOOK` 與四句訊息 |
+| `application.properties`、`.env.example` | 新增 `FACEBOOK_APP_ID`、`FACEBOOK_APP_SECRET`；`OAUTH_REDIRECT_URIS` 預設值加入 Facebook 的 callback |
+| `src/test/` | 新增 `FacebookOAuthClientTest`（5 項）；`UserServiceSocialLoginTest` 增加 2 項 |
+
+### 前端（`frontend/`）
+
+| 檔案 | 改動 |
+|---|---|
+| `config/oauthProviders.js` | 新增 `facebook` 一筆 |
+| `components/SocialLoginButtons.vue` | 新增 Facebook 按鈕 |
+| `api/users.js`、`api/index.js`、`config/routeTable.js` | 新增 `postFacebookLogin`；白名單加 `/facebook` |
+| `.env.example`、`Dockerfile`、根目錄 `docker-compose.yml` | 新增 `VITE_FACEBOOK_APP_ID` |
+
+callback 頁與按鈕元件沒有改，直接沿用 GitHub 那一版。
+
+### 環境設定
+
+1. 到 Meta for Developers 建立應用程式，加入 Facebook 登入與 `email` 權限，「有效的 OAuth 重新導向 URI」填 `http://localhost:5173/oauth/callback/facebook`。
+2. `livefit/.env`：`FACEBOOK_APP_ID`、`FACEBOOK_APP_SECRET`。
+3. `frontend/.env`：`VITE_FACEBOOK_APP_ID`（與上面的編號相同）。
+
+**如果 `livefit/.env` 裡自己設過 `OAUTH_REDIRECT_URIS`，要手動把 Facebook 的 callback 加進去**；沒設的話預設值已經包含。
+
+### 驗證結果
+
+已驗證：
+
+- `mvn test` 23 項通過。
+- 根目錄 68 項合約測試對 Spring Boot 版全數通過。
+- `vite build` 通過。
+- 用 curl 打實際啟動的後端：空 body、`redirect_uri` 不在白名單 → 400 `欄位未填寫正確`；填假的應用程式編號與密鑰、亂填 `code`（真的連到 Facebook）→ 400 `Facebook 登入驗證失敗`，耗時約 0.2 秒；後端 log 中沒有出現密鑰。
+
+- 以真實的 Facebook App（開發模式）在瀏覽器（`http://localhost:5173`）登入：email 與既有帳號不同 → 建立新帳號，名稱取自 Facebook，沒有密碼；`users` 與 `user_identities` 在同一個交易內寫入；既有的 GitHub + Google 帳號沒有被動到。
+- 三個平台的主流程都驗證過後，刪除本機 `livefit` 資料庫的舊欄位 `users.google_sub`：刪除前確認該欄位全為 null，刪除後 `users` 筆數不變，三筆綁定都還在。
+
+尚未驗證：
+
+- **「同 email 已有帳號回 409」沒有在瀏覽器測到**（測試用的 Facebook 帳號 email 剛好與既有帳號不同），只在整合測試驗過。這是 Facebook 登入最特別的一條規則。
+- 「Facebook 沒有提供 email」只在單元測試用假造的回應驗過。
+- 授權頁按取消、登入後按上一頁：與 GitHub 共用同一段程式，GitHub 已驗證，Facebook 沒有另外測。
+- 容器版前端（3000 port）沒有測。
+
+### 注意事項
+
+- **Facebook 不會自動綁定既有帳號**，這是刻意的，理由與反方向的已知限制見 `docs/springboot-migration-plan.md` §11.7。
+- Facebook App 在開發模式下只有具應用程式角色的帳號能登入。
+- `FACEBOOK_APP_SECRET` 只放 `livefit/.env`，不要放進任何 `VITE_*` 變數。
+- Graph API 版本 `v26.0` 寫在後端與前端各一處，升級時要一起改。
+- **其他既有環境要自己刪 `users.google_sub`**：這個舊欄位只存在於「第三方登入共用層」之前就建好的資料庫，SQL 見 `docs/springboot-migration-plan.md` §11.7。刪除前先確認搬資料的 SQL（§11.5）跑過；刪除後就不能 revert 回共用層之前的程式碼。全新建立的資料庫本來就沒有這個欄位。
+- `frontend/` 與 `docs/` 的改動同樣**不要 merge 回 `main`**。
+
+---
+
 ## 2026-10-05 — GitHub 登入
 
 分支：`feature/github-login`（預計 merge 回 `springboot-backend`）

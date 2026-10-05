@@ -62,6 +62,12 @@ public class UserController {
         return ApiResponse.success(userService.githubLogin(request));
     }
 
+    @PostMapping("/facebook")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<LoginResponse> facebookLogin(@RequestBody(required = false) OAuthCodeLoginRequest request) {
+        return ApiResponse.success(userService.facebookLogin(request));
+    }
+
     @GetMapping("/profile")
     public ApiResponse<ProfileResponse> getProfile(@AuthenticationPrincipal AuthUser authUser) {
         return ApiResponse.success(userService.getProfile(authUser.getUser()));

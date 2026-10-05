@@ -11,6 +11,10 @@ export function postGithubLogin(data) {
   return request.post("users/github", data);
 }
 
+export function postFacebookLogin(data) {
+  return request.post("users/facebook", data);
+}
+
 export function postSignup(data) {
   return request.post("users/signup", data);
 }

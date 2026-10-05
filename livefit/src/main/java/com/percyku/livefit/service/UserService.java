@@ -22,6 +22,7 @@ import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.FacebookOAuthClient;
 import com.percyku.livefit.security.GithubOAuthClient;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.JwtTokenProvider;
@@ -34,6 +35,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
 /** 對應 backend/controllers/users.js 的業務邏輯，另加 Node 版沒有的第三方登入 */
 @Service
@@ -47,6 +49,7 @@ public class UserService {
     private final JwtTokenProvider tokenProvider;
     private final GoogleIdTokenVerifier googleIdTokenVerifier;
     private final GithubOAuthClient githubOAuthClient;
+    private final FacebookOAuthClient facebookOAuthClient;
     private final OAuthProperties oAuthProperties;
     private final TransactionTemplate transactionTemplate;
 
@@ -61,6 +64,7 @@ public class UserService {
                        JwtTokenProvider tokenProvider,
                        GoogleIdTokenVerifier googleIdTokenVerifier,
                        GithubOAuthClient githubOAuthClient,
+                       FacebookOAuthClient facebookOAuthClient,
                        OAuthProperties oAuthProperties,
                        TransactionTemplate transactionTemplate) {
         this.userRepository = userRepository;
@@ -71,6 +75,7 @@ public class UserService {
         this.tokenProvider = tokenProvider;
         this.googleIdTokenVerifier = googleIdTokenVerifier;
         this.githubOAuthClient = githubOAuthClient;
+        this.facebookOAuthClient = facebookOAuthClient;
         this.oAuthProperties = oAuthProperties;
         this.transactionTemplate = transactionTemplate;
     }
@@ -164,9 +169,28 @@ public class UserService {
 
     /**
      * GitHub 登入：用授權碼向 GitHub 取得使用者資料後交給 socialLogin 對應帳號。
-     * 刻意不加 @Transactional，理由同 googleLogin（這裡要連 GitHub 三次）。
+     * GithubOAuthClient 只會回傳主要且驗證過的 email，所以可以綁定既有帳號。
      */
     public LoginResponse githubLogin(OAuthCodeLoginRequest request) {
+        return oauthCodeLogin(request, githubOAuthClient::fetchProfile);
+    }
+
+    /**
+     * Facebook 登入：流程同 GitHub。差別是 Facebook 不保證 email 驗證過，
+     * 所以只能登入已綁定的帳號或建立新帳號，同 email 已有帳號時回 409，不會自動綁定。
+     */
+    public LoginResponse facebookLogin(OAuthCodeLoginRequest request) {
+        return oauthCodeLogin(request, facebookOAuthClient::fetchProfile);
+    }
+
+    /**
+     * 走 authorization code 流程的平台共用。
+     * 刻意不加 @Transactional，理由同 googleLogin（fetchProfile 要連平台好幾次）。
+     *
+     * @param fetchProfile 用 (code, redirectUri) 向平台換回使用者資料；subject 與 email 保證有值
+     */
+    private LoginResponse oauthCodeLogin(OAuthCodeLoginRequest request,
+                                         BiFunction<String, String, SocialProfile> fetchProfile) {
         if (request == null
                 || !ValidUtils.isValidString(request.code())
                 // 只接受事先登記的 redirect_uri，不讓授權碼被拿去跟別的網址配對
@@ -174,8 +198,7 @@ public class UserService {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
-        // GithubOAuthClient 只會回傳主要且驗證過的 email，沒有的話在裡面就擋掉了
-        SocialProfile profile = githubOAuthClient.fetchProfile(request.code().trim(), request.redirectUri());
+        SocialProfile profile = fetchProfile.apply(request.code().trim(), request.redirectUri());
 
         User user = socialLogin(profile);
         String token = tokenProvider.createToken(user.getId(), user.getRole());
@@ -207,7 +230,7 @@ public class UserService {
                     user = userRepository.save(created);
                 } else if (!profile.emailVerified()) {
                     // 沒驗證過的 email 不能拿來綁定既有帳號，否則任何人都能用別人的信箱接管帳號
-                    throw ApiException.conflict(ErrorMessages.EMAIL_TAKEN);
+                    throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
                 } else if (userIdentityRepository.existsByUserIdAndProvider(user.getId(), profile.provider())) {
                     // 已綁定的若就是這個平台帳號，代表另一個請求剛好搶先綁好了，直接登入；
                     // 綁的是這個平台的另一個帳號時不覆蓋
