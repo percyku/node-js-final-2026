@@ -451,3 +451,42 @@ WHERE google_sub IS NOT NULL
 `users.google_sub` 欄位**暫時保留**（Entity 已不對映，不影響寫入），這樣 revert 時舊程式碼仍可運作。等 GitHub、Facebook 登入都完成後再 `ALTER TABLE users DROP COLUMN google_sub`。
 
 測試：`cd livefit && mvn test`。`UserServiceSocialLoginTest` 把 `GoogleIdTokenVerifier` 換成假的，其餘走真的 `livefit` 資料庫（**需要 postgres 在線**），用隨機 email 並在結束後刪掉自己建的資料。
+
+### 11.6 GitHub 登入（`POST /api/users/github`）
+
+GitHub 不像 Google 會給前端一張可離線驗簽的 ID token，所以走 authorization code 流程：
+
+1. 前端按鈕產生隨機 `state` 存進 `sessionStorage`，整頁導向 `https://github.com/login/oauth/authorize`。
+2. 使用者授權後，GitHub 帶著 `code` 與 `state` 跳回前端的 `/oauth/callback/github`。
+3. 前端比對 `state` 後，把 `{ code, redirect_uri }` POST 給後端。
+4. 後端用 `code` + client secret 換 access token，再取使用者資料，組成 `SocialProfile` 交給 `socialLogin`（§11.5），簽發自家 JWT。
+
+後端仍然是 STATELESS：沒有用 `spring-security-oauth2-client`，也沒有 session；`state` 由前端自己存、自己比對。沒有新增 Maven 依賴（`RestClient` 隨 `spring-boot-starter-web` 提供）。
+
+| 檔案 | 內容 |
+|---|---|
+| `security/GithubOAuthClient` | 連 GitHub 三次：換 token、`/user`、`/user/emails` |
+| `config/GithubProperties` | `GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET` |
+| `config/OAuthProperties` | `OAUTH_REDIRECT_URIS`：允許的 `redirect_uri` 白名單（之後 Facebook 共用） |
+| `dto/user/OAuthCodeLoginRequest` | `{ code, redirect_uri }`（之後 Facebook 共用） |
+| `UserService.githubLogin` | 驗欄位與白名單 → `GithubOAuthClient` → `socialLogin` |
+| `SecurityConfig` | matcher 不需改；兩個新的 Properties 要加進 `@EnableConfigurationProperties` |
+
+容易踩到的地方：
+
+- **GitHub 換 token 失敗時回的是 HTTP 200**，錯誤放在 body 的 `error` 欄位（例如 `bad_verification_code`），所以判斷依據是「有沒有 `access_token`」而不是狀態碼。另外要帶 `Accept: application/json`，否則回的是 form 編碼。
+- **只採用 `primary && verified` 的 email**，所以交給 `socialLogin` 時 `emailVerified` 一律是 true，可以綁定既有帳號。主要 email 未驗證時不會退而求其次用別的 email，直接回 400。
+- **GitHub 的顯示名稱可以不填**（`name` 為 null），這時用帳號名稱 `login`。
+- **逾時是連線 2 秒、讀取 3 秒**。前端 axios 的逾時是 10 秒，後端連續三次呼叫的時間要壓在這之下，否則前端先斷線、後端卻已建好帳號。
+- **`code` 只能用一次**，所以前端 callback 頁取出 `state` 後立刻從 `sessionStorage` 移除：重新整理或按上一頁回到這頁時會直接回登入頁，不會重送。
+- **容器版前端（3000）能不能共用同一個 OAuth App 還沒確認**。callback URL 登記的是 5173；GitHub 文件說 loopback 位址的 `redirect_uri` 不必與登記的 port 相同，但只明確提到 `127.0.0.1`，`localhost` 是否適用沒有實測。不行的話就為 3000 另建一個 OAuth App。
+
+前端：
+
+- `config/oauthProviders.js`：各平台的授權網址、scope、對應的 API 函式。加新平台只要在這裡加一筆。
+- `components/OAuthRedirectButton.vue`：導向授權頁的按鈕，未設定 client id 時不顯示。
+- `components/SocialLoginButtons.vue`：把「或」分隔線、Google 按鈕、GitHub 按鈕包在一起，登入頁與註冊頁共用。分隔線原本在 `GoogleLoginButton.vue` 裡，搬到這裡是為了只設定 GitHub 時也有分隔線、兩個都設定時不會出現兩條。
+- `pages/public/auth/OAuthCallbackView.vue` + 路由 `/oauth/callback/:provider`。
+- `config/routeTable.js`：`post-users` 白名單加入 `/github`。
+
+測試：`GithubOAuthClientTest` 用 `MockRestServiceServer` 假造 GitHub 的回應（不連線、不需要資料庫）；`UserServiceSocialLoginTest` 多了三項 GitHub 的情境。

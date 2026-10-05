@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `backend/` | Node.js + Express 5 + TypeORM | 正式繳交用，GitHub Actions 驗收的對象 |
 | `livefit/` | Spring Boot 3.5 + Spring Data JPA + Spring Security | `springboot-backend` 分支上的移植版，不列入作業驗收 |
 
-兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google 登入**並改用**獨立資料庫**（同文件 §11），這兩項 Node 版沒有。
+兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
 
 ## 規格的唯一來源
 
@@ -131,6 +131,17 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 - `GOOGLE_CLIENT_ID`（後端）與 `VITE_GOOGLE_CLIENT_ID`（前端）必須是**同一個值**；後端留空時端點回 400 `尚未設定 Google 登入`，前端留空時不顯示 Google 按鈕。
 - 前端的 `VITE_*` 是 **build-time** 變數：本機 `npm run dev` 讀 `frontend/.env`；容器化的前端要靠 `docker-compose.yml` 的 build arg 並重新 build。
 - Google Cloud Console 的 Authorized JavaScript origins 要登記實際開啟頁面的 origin（`http://localhost:5173`、`http://localhost:3000`；`localhost` 與 `127.0.0.1` 視為不同 origin）。
+
+### GitHub 登入（僅 `livefit/`）
+
+`POST /api/users/github` 收 `{ code, redirect_uri }`。GitHub 沒有可離線驗簽的 ID token，所以 `security/GithubOAuthClient` 要拿 code + client secret 連 GitHub 三次（換 token、`/user`、`/user/emails`），再把結果交給與 Google 共用的 `UserService.socialLogin`。後端一樣是 STATELESS，`state` 由前端存在 `sessionStorage` 並在 `/oauth/callback/:provider` 自行比對。
+
+- **GitHub 換 token 失敗時回 HTTP 200**，錯誤在 body 的 `error` 欄位。判斷依據是有沒有 `access_token`，不要改成只看狀態碼。
+- **只採用 `primary && verified` 的 email**。這是能綁定既有帳號的前提，理由與 Google 的 `email_verified` 相同，不能放寬成「任一個驗證過的 email」以外的條件，更不能用 `/user` 回傳的公開 email（那個沒有驗證旗標）。
+- `GITHUB_CLIENT_ID`（後端）與 `VITE_GITHUB_CLIENT_ID`（前端）必須相同；`GITHUB_CLIENT_SECRET` **只放後端**。後端任一留空時端點回 400 `尚未設定 GitHub 登入`，前端留空時不顯示按鈕。
+- 前端送來的 `redirect_uri` 必須在 `OAUTH_REDIRECT_URIS` 白名單內，且與 GitHub OAuth App 登記的 callback URL 完全相同（`http://localhost:5173/oauth/callback/github`）。容器版前端（3000）能否共用同一個 OAuth App 尚未實測，不行就另建一個。
+- `GithubOAuthClient` 的逾時（連線 2 秒、讀取 3 秒）是配合前端 axios 的 10 秒設的，調高前先算三次呼叫的總和。
+- 加新的 authorization code 平台：後端加一個 `XxxOAuthClient` 回傳 `SocialProfile` 與一個 `UserIdentity.PROVIDER_*` 常數；前端在 `config/oauthProviders.js` 加一筆、在 `SocialLoginButtons.vue` 加一個按鈕、在 `routeTable.js` 的白名單加路徑。
 
 ### 密碼雜湊格式相容，但資料與 token 都不互通
 
