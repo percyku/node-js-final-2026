@@ -328,7 +328,7 @@ test/
 
 行為以 `docs/openapi.yaml` 為準，**通過作業原生的 68 項合約測試**。
 
-另外多了兩項 Node 版沒有的東西：**Google 第三方登入**（`POST /api/users/google`），以及**獨立的資料庫 `livefit`**（不與 Node 版的 `fitness` 共用）。
+另外多了 Node 版沒有的東西：**Google 與 GitHub 第三方登入**（`POST /api/users/google`、`POST /api/users/github`），以及**獨立的資料庫 `livefit`**（不與 Node 版的 `fitness` 共用）。
 
 ## 怎麼跑
 
@@ -366,6 +366,20 @@ port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` �
 3. 啟動前端：`cd frontend && npm install && npm run dev`，瀏覽器開 `http://localhost:5173/login`。
 
 請用 `localhost` 而不是 `127.0.0.1` 開頁面，Google 把兩者視為不同來源。帳號綁定規則見 [`CHANGELOG.md`](CHANGELOG.md)。
+
+### 啟用 GitHub 登入（選用）
+
+不設定也能正常啟動，只是登入頁不會出現 GitHub 按鈕。
+
+1. 到 GitHub → Settings → Developer settings → OAuth Apps 建立 OAuth App：
+   - Homepage URL：`http://localhost:5173`
+   - Authorization callback URL：`http://localhost:5173/oauth/callback/github`
+2. 產生一組 Client secret，填進設定檔：
+   - `livefit/.env` 的 `GITHUB_CLIENT_ID` 與 `GITHUB_CLIENT_SECRET`
+   - `frontend/.env` 的 `VITE_GITHUB_CLIENT_ID`（與上面的 Client ID 相同；**secret 不要放前端**）
+3. 重新啟動後端與前端，瀏覽器開 `http://localhost:5173/login`。
+
+上面登記的是本機開發用的 5173。容器版前端（`http://localhost:3000`）能否共用同一個 OAuth App 尚未實測；登入時若 GitHub 顯示 redirect_uri 不符，就為 3000 另建一個 App。GitHub 帳號必須有一個**主要且驗證過**的 email 才能登入。
 
 ## 拿作業的測試來驗
 

@@ -62,7 +62,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 用 POST /api/users/login（或 POST /api/users/google）拿到的 token
+      description: 用 POST /api/users/login（或 POST /api/users/google、POST /api/users/github）拿到的 token
 
 paths:
   # ===== g1-skill-package =====
@@ -777,6 +777,135 @@ paths:
               example:
                 status: failed
                 message: Email 已被使用
+  /api/users/github:
+    post:
+      tags:
+        - M2 會員系統
+      summary: GitHub 登入，取得 JWT token（僅 Spring Boot 版）
+      description: |
+        用 GitHub 帳號登入。前端把使用者導向 GitHub 授權頁，授權後 GitHub 帶著一次性的授權碼（code）
+        跳回前端的 /oauth/callback/github，前端再把 code 送到這支 API。
+        成功後回傳的內容與 POST /api/users/login 完全相同，之後的用法也一樣。
+
+        行為備註：
+        - ⚠️ 這支 API 只有 Spring Boot 版後端（livefit/）有實作，Node 版（backend/）沒有，不列入作業驗收。
+        - 後端會拿 code 加上 Client secret 向 GitHub 換 access token，再用它取得使用者的 id、名稱與 email。
+          access token 用完即丟，不會儲存，也不會回傳給前端。
+        - redirect_uri 必須是後端 OAUTH_REDIRECT_URIS 白名單內的網址，而且要與前端導向授權頁時用的完全相同。
+        - 只採用 GitHub 上「主要且驗證過」的 email；帳號沒有這樣的 email 就無法登入。
+        - 帳號對應規則與 Google 登入相同（依序判斷）：
+          1. 這個 GitHub 帳號以前登入過 → 直接登入原帳號。
+          2. 沒登入過，但該 email 已經有帳號（密碼註冊或用 Google 建立的都算）→ 自動綁定到那個既有帳號並登入，
+             原本的密碼與其他登入方式都不受影響。
+          3. 都沒有 → 建立新會員（role 固定是 USER、沒有密碼），暱稱取 GitHub 的顯示名稱，沒填的話用帳號名稱（最多 50 字）。
+        - ⚠️ 用 GitHub 建立的帳號沒有密碼：不能用 POST /api/users/login 登入，也不能用 PUT /api/users/password 修改密碼。
+        - ⚠️ code 只能使用一次，而且約 10 分鐘後過期；重送同一個 code 會得到「GitHub 登入驗證失敗」。
+        - JWT payload 與一般登入相同，必含 { id, role, exp }。
+        - 成功狀態碼是 201，與一般登入一致。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+                - redirect_uri
+              properties:
+                code:
+                  type: string
+                  description: GitHub 授權後帶回前端的一次性授權碼
+                  example: 4f3c2b1a0e9d8c7b6a5f
+                redirect_uri:
+                  type: string
+                  description: 前端導向 GitHub 授權頁時使用的 redirect_uri
+                  example: http://localhost:5173/oauth/callback/github
+            example:
+              code: 4f3c2b1a0e9d8c7b6a5f
+              redirect_uri: http://localhost:5173/oauth/callback/github
+      responses:
+        '201':
+          description: 登入成功，回應格式與 POST /api/users/login 相同
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: 本站的 JWT token（不是 GitHub 的 access token），payload 必含 { id, role, exp }
+                        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBmZDk2YjNjIiwicm9sZSI6IlVTRVIiLCJleHAiOjE3NTAwMDAwMDB9.signature
+                      user:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            example: 小華
+              example:
+                status: success
+                data:
+                  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBmZDk2YjNjIiwicm9sZSI6IlVTRVIiLCJleHAiOjE3NTAwMDAwMDB9.signature
+                  user:
+                    name: 小華
+        '400':
+          description: |
+            登入失敗。
+            - code 缺漏／空字串，或 redirect_uri 缺漏／不在白名單內：「欄位未填寫正確」
+            - 後端沒有設定 GITHUB_CLIENT_ID 或 GITHUB_CLIENT_SECRET：「尚未設定 GitHub 登入」
+            - code 無效、已使用過或已過期，或連不上 GitHub：「GitHub 登入驗證失敗」
+            - GitHub 帳號沒有主要且驗證過的 email：「此 GitHub 帳號沒有已驗證的 Email，無法登入」
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: failed
+                  message:
+                    type: string
+              examples:
+                欄位錯誤:
+                  summary: code 或 redirect_uri 缺漏，或 redirect_uri 不在白名單
+                  value:
+                    status: failed
+                    message: 欄位未填寫正確
+                尚未設定:
+                  summary: 後端未設定 GitHub Client ID / secret
+                  value:
+                    status: failed
+                    message: 尚未設定 GitHub 登入
+                驗證失敗:
+                  summary: code 無法換到使用者資料
+                  value:
+                    status: failed
+                    message: GitHub 登入驗證失敗
+                沒有已驗證Email:
+                  summary: GitHub 帳號沒有主要且驗證過的 email
+                  value:
+                    status: failed
+                    message: 此 GitHub 帳號沒有已驗證的 Email，無法登入
+        '409':
+          description: 這個 Email 的帳號已經綁定了另一個 GitHub 帳號
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: failed
+                  message:
+                    type: string
+              example:
+                status: failed
+                message: Email 已被使用
   /api/users/profile:
     get:
       tags:
@@ -987,7 +1116,7 @@ paths:
            不是只檢查新密碼，舊密碼格式不符也會擋 → 400「密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字」
         3. ⚠️ 新密碼跟舊密碼相同會被擋 → 400「新密碼不能與舊密碼相同」
         4. new_password 與 confirm_new_password 不一致 → 400「新密碼與驗證新密碼不一致」
-        5. 用第三方登入（目前是 Google）建立、沒有密碼的帳號 → 400「此帳號使用第三方登入，無法修改密碼」（僅 Spring Boot 版；
+        5. 用第三方登入（Google、GitHub）建立、沒有密碼的帳號 → 400「此帳號使用第三方登入，無法修改密碼」（僅 Spring Boot 版；
            先用密碼註冊、之後才綁定第三方帳號的不受影響，照常可以修改）
         6. 舊密碼比對錯誤 → 400「密碼輸入錯誤」
         - 成功 200，data 是 null（沒有任何資料要回）。

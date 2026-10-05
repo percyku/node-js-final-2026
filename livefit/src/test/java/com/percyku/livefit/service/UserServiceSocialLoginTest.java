@@ -4,18 +4,21 @@ import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
+import com.percyku.livefit.dto.user.OAuthCodeLoginRequest;
 import com.percyku.livefit.dto.user.SignupRequest;
 import com.percyku.livefit.dto.user.UpdatePasswordRequest;
 import com.percyku.livefit.entity.User;
 import com.percyku.livefit.entity.UserIdentity;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.GithubOAuthClient;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.SocialProfile;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.ArrayList;
@@ -29,15 +32,21 @@ import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 第三方登入的帳號對應。根目錄的黑箱測試拿不到真的 Google ID token，測不到這一段，
- * 所以這裡把 GoogleIdTokenVerifier 換成假的，其餘（含交易與 unique 約束）都走真的資料庫。
+ * 所以這裡把 GoogleIdTokenVerifier 與 GithubOAuthClient 換成假的，其餘（含交易與 unique 約束）都走真的資料庫。
  * 需要 livefit 資料庫在線；每個測試用隨機 email，結束後刪掉自己建的資料。
  */
 @SpringBootTest
+@TestPropertySource(properties = "oauth.redirect-uris=" + UserServiceSocialLoginTest.REDIRECT_URI)
 class UserServiceSocialLoginTest {
+
+    static final String REDIRECT_URI = "http://localhost:5173/oauth/callback/github";
 
     private static final String PASSWORD = "Aa123456";
     private static final int CONCURRENCY = 8;
@@ -51,6 +60,8 @@ class UserServiceSocialLoginTest {
 
     @MockitoBean
     private GoogleIdTokenVerifier googleIdTokenVerifier;
+    @MockitoBean
+    private GithubOAuthClient githubOAuthClient;
 
     private final List<String> createdEmails = new ArrayList<>();
 
@@ -157,6 +168,44 @@ class UserServiceSocialLoginTest {
         assertThat(identitiesOf(userRepository.findByEmail(email).orElseThrow())).hasSize(1);
     }
 
+    @Test
+    void GitHub登入會綁定同email的密碼帳號_且可與Google並存() {
+        String email = newEmail();
+        userService.signup(new SignupRequest("密碼使用者", email, PASSWORD));
+        userService.googleLogin(new GoogleLoginRequest(
+                googleCredential("sub-" + UUID.randomUUID(), email, true, "Google 名稱")));
+
+        String code = githubCode("gh-" + UUID.randomUUID(), email, "octocat");
+        assertThat(userService.githubLogin(new OAuthCodeLoginRequest(code, REDIRECT_URI)).user().name())
+                .isEqualTo("密碼使用者");
+
+        User user = userRepository.findByEmail(email).orElseThrow();
+        assertThat(identitiesOf(user)).extracting(UserIdentity::getProvider)
+                .containsExactlyInAnyOrder(UserIdentity.PROVIDER_GOOGLE, UserIdentity.PROVIDER_GITHUB);
+        assertThat(userService.login(new LoginRequest(email, PASSWORD)).token()).isNotBlank();
+    }
+
+    @Test
+    void 沒登入過的GitHub帳號會建立無密碼帳號() {
+        String email = newEmail();
+        String code = githubCode("gh-" + UUID.randomUUID(), email, "octocat");
+
+        assertThat(userService.githubLogin(new OAuthCodeLoginRequest(code, REDIRECT_URI)).user().name())
+                .isEqualTo("octocat");
+        assertThat(userRepository.findByEmail(email).orElseThrow().getPassword()).isNull();
+    }
+
+    @Test
+    void redirect_uri不在白名單時回400_不會拿code去換token() {
+        assertThatThrownBy(() -> userService.githubLogin(
+                new OAuthCodeLoginRequest("any-code", "https://evil.example.com/oauth/callback/github")))
+                .isInstanceOfSatisfying(ApiException.class, ex -> {
+                    assertThat(ex.getStatus()).isEqualTo(400);
+                    assertThat(ex.getMessage()).isEqualTo(ErrorMessages.INVALID_FIELDS);
+                });
+        verify(githubOAuthClient, never()).fetchProfile(anyString(), anyString());
+    }
+
     private String newEmail() {
         String email = "social-test-" + UUID.randomUUID() + "@example.com";
         createdEmails.add(email);
@@ -169,6 +218,14 @@ class UserServiceSocialLoginTest {
         when(googleIdTokenVerifier.verify(credential)).thenReturn(
                 new SocialProfile(UserIdentity.PROVIDER_GOOGLE, sub, email, emailVerified, name));
         return credential;
+    }
+
+    /** 回傳一個假的授權碼，交給 githubLogin 時會被「換」成指定的使用者資料 */
+    private String githubCode(String githubId, String email, String name) {
+        String code = "code-" + UUID.randomUUID();
+        when(githubOAuthClient.fetchProfile(code, REDIRECT_URI)).thenReturn(
+                new SocialProfile(UserIdentity.PROVIDER_GITHUB, githubId, email, true, name));
+        return code;
     }
 
     private List<UserIdentity> identitiesOf(User user) {

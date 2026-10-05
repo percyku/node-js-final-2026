@@ -7,6 +7,10 @@ export function postGoogleLogin(data) {
   return request.post("users/google", data);
 }
 
+export function postGithubLogin(data) {
+  return request.post("users/github", data);
+}
+
 export function postSignup(data) {
   return request.post("users/signup", data);
 }

@@ -31,6 +31,11 @@ const routes = [
     component: () => import("../pages/public/auth/SignupView.vue"),
   },
   {
+    // 第三方登入（GitHub 等）授權後跳回來的頁面，需與各平台後台登記的 callback URL 相同
+    path: "/oauth/callback/:provider",
+    component: () => import("../pages/public/auth/OAuthCallbackView.vue"),
+  },
+  {
     path: "/user",
     component: () => import("../pages/user/UserLayout.vue"),
     redirect: "/user/dashboard",

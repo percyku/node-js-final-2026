@@ -3,7 +3,7 @@ import { setKeyFromCookie } from "./cookie.js";
 import { useUserStore } from "../stores/user.js";
 
 // 登入成功後的共用處理：存 token、更新使用者狀態、依角色導頁
-// 密碼登入與 Google 登入的回應格式相同（data.token、data.user.name），所以共用這一段
+// 密碼登入與各種第三方登入的回應格式相同（data.token、data.user.name），所以共用這一段
 export function handleLoginSuccess(data, router) {
   const { role, exp } = jwtDecode(data.token);
 

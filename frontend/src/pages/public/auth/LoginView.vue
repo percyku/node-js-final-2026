@@ -36,7 +36,7 @@
             登入
           </button>
 
-          <GoogleLoginButton />
+          <SocialLoginButtons />
 
           <p class="text-center text-sm text-primary-400">
             還沒有帳號?
@@ -66,7 +66,7 @@ import { useRouter } from "vue-router";
 import { postLogin } from "../../../api/index.js";
 import swalHandler from "../../../utils/swalHandler.js";
 import { handleLoginSuccess } from "../../../utils/loginHandler.js";
-import GoogleLoginButton from "../../../components/GoogleLoginButton.vue";
+import SocialLoginButtons from "../../../components/SocialLoginButtons.vue";
 
 const { proxy } = getCurrentInstance();
 const router = useRouter();

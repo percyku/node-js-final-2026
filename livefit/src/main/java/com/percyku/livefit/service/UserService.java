@@ -3,10 +3,12 @@ package com.percyku.livefit.service;
 import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.common.ValidUtils;
+import com.percyku.livefit.config.OAuthProperties;
 import com.percyku.livefit.dto.user.CreditPurchaseResponse;
 import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
 import com.percyku.livefit.dto.user.LoginResponse;
+import com.percyku.livefit.dto.user.OAuthCodeLoginRequest;
 import com.percyku.livefit.dto.user.ProfileResponse;
 import com.percyku.livefit.dto.user.SignupRequest;
 import com.percyku.livefit.dto.user.SignupResponse;
@@ -20,6 +22,7 @@ import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.GithubOAuthClient;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.JwtTokenProvider;
 import com.percyku.livefit.security.SocialProfile;
@@ -43,6 +46,8 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final GoogleIdTokenVerifier googleIdTokenVerifier;
+    private final GithubOAuthClient githubOAuthClient;
+    private final OAuthProperties oAuthProperties;
     private final TransactionTemplate transactionTemplate;
 
     /** users.name 的欄位長度 */
@@ -55,6 +60,8 @@ public class UserService {
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider,
                        GoogleIdTokenVerifier googleIdTokenVerifier,
+                       GithubOAuthClient githubOAuthClient,
+                       OAuthProperties oAuthProperties,
                        TransactionTemplate transactionTemplate) {
         this.userRepository = userRepository;
         this.userIdentityRepository = userIdentityRepository;
@@ -63,6 +70,8 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.googleIdTokenVerifier = googleIdTokenVerifier;
+        this.githubOAuthClient = githubOAuthClient;
+        this.oAuthProperties = oAuthProperties;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -147,6 +156,26 @@ public class UserService {
                 || !profile.emailVerified()) {
             throw ApiException.badRequest(ErrorMessages.GOOGLE_VERIFY_FAILED);
         }
+
+        User user = socialLogin(profile);
+        String token = tokenProvider.createToken(user.getId(), user.getRole());
+        return LoginResponse.of(token, user.getName());
+    }
+
+    /**
+     * GitHub 登入：用授權碼向 GitHub 取得使用者資料後交給 socialLogin 對應帳號。
+     * 刻意不加 @Transactional，理由同 googleLogin（這裡要連 GitHub 三次）。
+     */
+    public LoginResponse githubLogin(OAuthCodeLoginRequest request) {
+        if (request == null
+                || !ValidUtils.isValidString(request.code())
+                // 只接受事先登記的 redirect_uri，不讓授權碼被拿去跟別的網址配對
+                || !oAuthProperties.isAllowedRedirectUri(request.redirectUri())) {
+            throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
+        }
+
+        // GithubOAuthClient 只會回傳主要且驗證過的 email，沒有的話在裡面就擋掉了
+        SocialProfile profile = githubOAuthClient.fetchProfile(request.code().trim(), request.redirectUri());
 
         User user = socialLogin(profile);
         String token = tokenProvider.createToken(user.getId(), user.getRole());

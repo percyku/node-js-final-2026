@@ -6,6 +6,94 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-05 — GitHub 登入
+
+分支：`feature/github-login`（預計 merge 回 `springboot-backend`）
+
+### 概述
+
+Spring Boot 版新增 GitHub 登入。GitHub 不提供可離線驗簽的 ID token，所以走 authorization code 流程：前端導向 GitHub 授權頁，拿到一次性的 `code` 後交給後端，後端用 `code` + client secret 向 GitHub 取得使用者資料，再交給上一版抽出的 `socialLogin` 對應帳號。`backend/`（Node 版）沒有改動。
+
+### 行為規則
+
+`POST /api/users/github`，body 為 `{ code, redirect_uri }`，成功回 201，內容與一般登入相同。
+
+帳號對應與 Google 登入共用同一套規則：GitHub 帳號登入過 → 直接登入；同 email 已有帳號 → 自動綁定（密碼與其他登入方式保留）；都沒有 → 建立無密碼的新帳號。同一個帳號可以同時綁 Google 與 GitHub。
+
+| 情況 | 回應 |
+|---|---|
+| `code` 缺漏，或 `redirect_uri` 缺漏／不在 `OAUTH_REDIRECT_URIS` 白名單內 | 400 `欄位未填寫正確` |
+| 後端沒設定 `GITHUB_CLIENT_ID` 或 `GITHUB_CLIENT_SECRET` | 400 `尚未設定 GitHub 登入` |
+| `code` 無效、用過、過期，或連不上 GitHub | 400 `GitHub 登入驗證失敗` |
+| GitHub 帳號沒有主要且驗證過的 email | 400 `此 GitHub 帳號沒有已驗證的 Email，無法登入` |
+| 該 email 的帳號已綁定另一個 GitHub 帳號 | 409 `Email 已被使用` |
+
+### 後端（`livefit/`）
+
+| 檔案 | 改動 |
+|---|---|
+| `security/GithubOAuthClient.java` | 新增。換 token、取 `/user`、取 `/user/emails`；連線逾時 2 秒、讀取逾時 3 秒 |
+| `config/GithubProperties.java`、`config/OAuthProperties.java` | 新增 |
+| `dto/user/OAuthCodeLoginRequest.java` | 新增 |
+| `service/UserService.java` | 新增 `githubLogin` |
+| `controller/UserController.java` | 新增 `POST /api/users/github` |
+| `config/SecurityConfig.java` | 註冊兩個新的 Properties（matcher 沒改） |
+| `entity/UserIdentity.java`、`common/ErrorMessages.java` | 新增 `PROVIDER_GITHUB` 與三句訊息 |
+| `application.properties`、`.env.example` | 新增 `GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`、`OAUTH_REDIRECT_URIS` |
+| `src/test/` | 新增 `GithubOAuthClientTest`（6 項）；`UserServiceSocialLoginTest` 增加 3 項 |
+
+### 前端（`frontend/`）
+
+| 檔案 | 改動 |
+|---|---|
+| `config/oauthProviders.js` | 新增。各平台的授權網址、scope、API 函式 |
+| `components/OAuthRedirectButton.vue` | 新增。導向授權頁的按鈕 |
+| `components/SocialLoginButtons.vue` | 新增。「或」分隔線 + Google 按鈕 + GitHub 按鈕 |
+| `components/GoogleLoginButton.vue` | 「或」分隔線移到 `SocialLoginButtons.vue`，其餘不變 |
+| `pages/public/auth/OAuthCallbackView.vue` | 新增。比對 `state`、把 `code` 交給後端 |
+| `pages/public/auth/LoginView.vue`、`SignupView.vue` | `<GoogleLoginButton />` 換成 `<SocialLoginButtons />` |
+| `router/index.js` | 新增 `/oauth/callback/:provider` |
+| `api/users.js`、`api/index.js`、`config/routeTable.js` | 新增 `postGithubLogin`；白名單加 `/github` |
+| `.env.example`、`Dockerfile`、根目錄 `docker-compose.yml` | 新增 `VITE_GITHUB_CLIENT_ID` |
+
+### 環境設定
+
+1. GitHub → Settings → Developer settings → OAuth Apps 建立 App，callback URL 填 `http://localhost:5173/oauth/callback/github`。
+2. `livefit/.env`：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`。
+3. `frontend/.env`：`VITE_GITHUB_CLIENT_ID`（與上面的 Client ID 相同）。
+
+`OAUTH_REDIRECT_URIS` 的預設值已包含 5173 與 3000 兩個 GitHub callback，本機開發不必另外設定。
+
+### 驗證結果
+
+已驗證：
+
+- `mvn test` 16 項通過。
+- 根目錄 68 項合約測試對 Spring Boot 版全數通過。
+- `vite build` 通過。
+- 用 curl 打實際啟動的後端：空 body、缺 `redirect_uri`、`redirect_uri` 不在白名單 → 400 `欄位未填寫正確`；未設定 client id → 400 `尚未設定 GitHub 登入`；填假的 client id 與 secret、亂填 `code`（真的連到 GitHub）→ 400 `GitHub 登入驗證失敗`，耗時約 0.4 秒。
+
+- 以真實的 GitHub OAuth App 在瀏覽器（`http://localhost:5173`）走完整流程：
+  - 沒有帳號時用 GitHub 登入 → 建立新帳號，名稱取自 GitHub 的顯示名稱，email 是 GitHub 上主要且驗證過的那筆，沒有密碼；`users` 與 `user_identities` 在同一個交易內寫入。
+  - 接著用同 email 的 Google 登入 → 綁到同一個帳號（`user_identities` 多一筆 `GOOGLE`，指向同一個 `user_id`），沒有另建帳號，名稱沒有被覆蓋。
+
+尚未驗證：
+
+- 在 GitHub 授權頁按取消時，是否回到登入頁並顯示「已取消 GitHub 登入」。
+- 登入成功後按瀏覽器的上一頁回到 callback 頁時，是否安靜地回到登入頁而不跳錯誤視窗。
+- 容器版前端（3000 port）。
+- 「GitHub 回 HTTP 200 加 `error`」只在單元測試用假造的回應驗過。上面那次真實連線用的是不存在的 client id，GitHub 回的是 404，走的是另一條路徑。
+- 反方向的綁定（先有密碼或 Google 帳號，再用 GitHub 登入）只在整合測試驗過，沒有在瀏覽器測。
+
+### 注意事項
+
+- **容器版前端（3000）能否共用同一個 OAuth App 尚未確認**。callback URL 登記的是 5173；GitHub 文件說 loopback 位址的 `redirect_uri` 不必與登記的 port 相同，但只明確提到 `127.0.0.1`，`localhost` 是否適用沒有實測。不行的話就為 3000 另建一個 App。
+- `GITHUB_CLIENT_SECRET` 只放 `livefit/.env`，不要放進任何 `VITE_*` 變數，那些會被打包進前端的 JS。
+- 容器版前端要重新 build 才會帶入 `VITE_GITHUB_CLIENT_ID`。
+- `frontend/` 與 `docs/` 的改動同樣**不要 merge 回 `main`**。
+
+---
+
 ## 2026-10-05 — 第三方登入共用層
 
 分支：`refactor/social-identity`（預計 merge 回 `springboot-backend`）
@@ -52,9 +140,7 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 - 本機 `livefit` 資料庫原有的 1 筆 Google 綁定已搬到 `user_identities`，`provider_user_id` 與原 `google_sub` 相同、指向同一個使用者。
 - `POST /api/users/google`：空 body → 400 `欄位未填寫正確`；格式錯誤的 token → 400 `Google 登入驗證失敗`。
 
-尚未驗證：
-
-- 沒有用真實 Google 帳號在瀏覽器登入。整合測試裡的 `GoogleIdTokenVerifier` 是假的，驗簽那一段這次沒有動，但也沒有重測。
+- 合併前以真實 Google 帳號在瀏覽器登入，進到原本的帳號。
 
 ### 注意事項
 
