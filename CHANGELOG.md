@@ -73,12 +73,17 @@ Spring Boot 版新增 GitHub 登入。GitHub 不提供可離線驗簽的 ID toke
 - `vite build` 通過。
 - 用 curl 打實際啟動的後端：空 body、缺 `redirect_uri`、`redirect_uri` 不在白名單 → 400 `欄位未填寫正確`；未設定 client id → 400 `尚未設定 GitHub 登入`；填假的 client id 與 secret、亂填 `code`（真的連到 GitHub）→ 400 `GitHub 登入驗證失敗`，耗時約 0.4 秒。
 
+- 以真實的 GitHub OAuth App 在瀏覽器（`http://localhost:5173`）走完整流程：
+  - 沒有帳號時用 GitHub 登入 → 建立新帳號，名稱取自 GitHub 的顯示名稱，email 是 GitHub 上主要且驗證過的那筆，沒有密碼；`users` 與 `user_identities` 在同一個交易內寫入。
+  - 接著用同 email 的 Google 登入 → 綁到同一個帳號（`user_identities` 多一筆 `GOOGLE`，指向同一個 `user_id`），沒有另建帳號，名稱沒有被覆蓋。
+
 尚未驗證：
 
-- **沒有用真實的 GitHub OAuth App 在瀏覽器走過完整流程**（導向授權頁 → 跳回 → 登入成功）。這需要先建 OAuth App。
-- 按鈕與 callback 頁的畫面沒有在瀏覽器裡看過，只確認可以建置。
-- 容器版前端（3000 port）沒有測。
+- 在 GitHub 授權頁按取消時，是否回到登入頁並顯示「已取消 GitHub 登入」。
+- 登入成功後按瀏覽器的上一頁回到 callback 頁時，是否安靜地回到登入頁而不跳錯誤視窗。
+- 容器版前端（3000 port）。
 - 「GitHub 回 HTTP 200 加 `error`」只在單元測試用假造的回應驗過。上面那次真實連線用的是不存在的 client id，GitHub 回的是 404，走的是另一條路徑。
+- 反方向的綁定（先有密碼或 Google 帳號，再用 GitHub 登入）只在整合測試驗過，沒有在瀏覽器測。
 
 ### 注意事項
 
