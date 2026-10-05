@@ -1,13 +1,10 @@
 <template>
-  <!-- 沒設定 VITE_GOOGLE_CLIENT_ID 時整塊不顯示 -->
-  <div v-if="clientId" class="space-y-4">
-    <div class="flex items-center gap-3 text-sm text-primary-400">
-      <span class="h-px flex-1 bg-primary-600"></span>
-      <span>或</span>
-      <span class="h-px flex-1 bg-primary-600"></span>
-    </div>
-    <div ref="buttonContainer" class="flex justify-center min-h-11"></div>
-  </div>
+  <!-- 沒設定 VITE_GOOGLE_CLIENT_ID 時不顯示；「或」分隔線在 SocialLoginButtons -->
+  <div
+    v-if="clientId"
+    ref="buttonContainer"
+    class="flex justify-center min-h-11"
+  ></div>
 </template>
 
 <script setup>
