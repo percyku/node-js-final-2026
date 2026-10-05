@@ -5,6 +5,7 @@ import com.percyku.livefit.dto.user.CreditPurchaseResponse;
 import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
 import com.percyku.livefit.dto.user.LoginResponse;
+import com.percyku.livefit.dto.user.OAuthCodeLoginRequest;
 import com.percyku.livefit.dto.user.ProfileResponse;
 import com.percyku.livefit.dto.user.SignupRequest;
 import com.percyku.livefit.dto.user.SignupResponse;
@@ -53,6 +54,12 @@ public class UserController {
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<LoginResponse> googleLogin(@RequestBody(required = false) GoogleLoginRequest request) {
         return ApiResponse.success(userService.googleLogin(request));
+    }
+
+    @PostMapping("/github")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<LoginResponse> githubLogin(@RequestBody(required = false) OAuthCodeLoginRequest request) {
+        return ApiResponse.success(userService.githubLogin(request));
     }
 
     @GetMapping("/profile")

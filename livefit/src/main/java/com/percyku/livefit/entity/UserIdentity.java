@@ -30,6 +30,7 @@ public class UserIdentity {
     // 刻意用字串常數而非 enum：Hibernate 會替 enum 欄位建 check 約束，
     // 而 ddl-auto=update 之後不會更新它，新增平台時寫入會失敗
     public static final String PROVIDER_GOOGLE = "GOOGLE";
+    public static final String PROVIDER_GITHUB = "GITHUB";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -43,7 +44,7 @@ public class UserIdentity {
     @Column(name = "provider", length = 20, nullable = false, updatable = false)
     private String provider;
 
-    /** 該平台的使用者唯一識別碼（Google 是 ID token 的 sub） */
+    /** 該平台的使用者唯一識別碼（Google 是 ID token 的 sub，GitHub 是數字 id） */
     @Column(name = "provider_user_id", length = 255, nullable = false, updatable = false)
     private String providerUserId;
 
