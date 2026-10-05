@@ -532,9 +532,15 @@ GitHub 不像 Google 會給前端一張可離線驗簽的 ID token，所以走 a
 
 #### `users.google_sub` 欄位
 
-§11.5 保留下來的舊欄位，Entity 已不對映。三個平台都驗證過之後可以刪除：
+§11.5 保留下來的舊欄位，Entity 已不對映。只有在 §11.5 之前就建好的資料庫才有它；全新建立的資料庫不會有。三個平台都驗證過之後刪除（本機的 `livefit` 已於 2026-10-05 執行）：
 
 ```sql
+-- 先確認沒有還沒搬到 user_identities 的資料，應該回 0
+SELECT count(*) FROM users u
+WHERE google_sub IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM user_identities i
+                  WHERE i.user_id = u.id AND i.provider = 'GOOGLE' AND i.provider_user_id = u.google_sub);
+
 ALTER TABLE users DROP COLUMN google_sub;
 ```
 

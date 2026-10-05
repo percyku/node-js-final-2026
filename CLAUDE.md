@@ -100,7 +100,7 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 - 兩個資料庫的資料不互通，帳號要各自註冊。
 - `ddl-auto=update` 只增不改：新增欄位會自動補上，但改欄位型別、長度、nullable 不會套用到既有的表，需要手動 `ALTER TABLE`。
 
-容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users.password` 可為 null，並多一張 `user_identities` 表記錄第三方登入的綁定（`provider` + `provider_user_id`）；`users.google_sub` 是搬移前的舊欄位，Entity 已不對映，待其他平台登入完成後才刪除。
+容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users.password` 可為 null，並多一張 `user_identities` 表記錄第三方登入的綁定（`provider` + `provider_user_id`）。舊的 `users.google_sub` 欄位已從本機資料庫刪除；較早建立的其他環境若還有，照 `docs/springboot-migration-plan.md` §11.7 處理。
 
 ### 兩套後端的分層差異
 

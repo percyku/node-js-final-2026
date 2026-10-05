@@ -71,11 +71,14 @@ callback 頁與按鈕元件沒有改，直接沿用 GitHub 那一版。
 - `vite build` 通過。
 - 用 curl 打實際啟動的後端：空 body、`redirect_uri` 不在白名單 → 400 `欄位未填寫正確`；填假的應用程式編號與密鑰、亂填 `code`（真的連到 Facebook）→ 400 `Facebook 登入驗證失敗`，耗時約 0.2 秒；後端 log 中沒有出現密鑰。
 
+- 以真實的 Facebook App（開發模式）在瀏覽器（`http://localhost:5173`）登入：email 與既有帳號不同 → 建立新帳號，名稱取自 Facebook，沒有密碼；`users` 與 `user_identities` 在同一個交易內寫入；既有的 GitHub + Google 帳號沒有被動到。
+- 三個平台的主流程都驗證過後，刪除本機 `livefit` 資料庫的舊欄位 `users.google_sub`：刪除前確認該欄位全為 null，刪除後 `users` 筆數不變，三筆綁定都還在。
+
 尚未驗證：
 
-- **沒有用真實的 Facebook App 在瀏覽器走過完整流程。** 這需要先建立 App。
-- Facebook 按鈕的畫面沒有在瀏覽器裡看過，只確認可以建置。
-- 「同 email 已有帳號回 409」與「Facebook 沒有提供 email」只在測試裡用假造的資料驗過。
+- **「同 email 已有帳號回 409」沒有在瀏覽器測到**（測試用的 Facebook 帳號 email 剛好與既有帳號不同），只在整合測試驗過。這是 Facebook 登入最特別的一條規則。
+- 「Facebook 沒有提供 email」只在單元測試用假造的回應驗過。
+- 授權頁按取消、登入後按上一頁：與 GitHub 共用同一段程式，GitHub 已驗證，Facebook 沒有另外測。
 - 容器版前端（3000 port）沒有測。
 
 ### 注意事項
@@ -84,7 +87,7 @@ callback 頁與按鈕元件沒有改，直接沿用 GitHub 那一版。
 - Facebook App 在開發模式下只有具應用程式角色的帳號能登入。
 - `FACEBOOK_APP_SECRET` 只放 `livefit/.env`，不要放進任何 `VITE_*` 變數。
 - Graph API 版本 `v26.0` 寫在後端與前端各一處，升級時要一起改。
-- `users.google_sub` 舊欄位還沒刪，等 Facebook 登入在瀏覽器驗證過再執行 §11.7 的 SQL。
+- **其他既有環境要自己刪 `users.google_sub`**：這個舊欄位只存在於「第三方登入共用層」之前就建好的資料庫，SQL 見 `docs/springboot-migration-plan.md` §11.7。刪除前先確認搬資料的 SQL（§11.5）跑過；刪除後就不能 revert 回共用層之前的程式碼。全新建立的資料庫本來就沒有這個欄位。
 - `frontend/` 與 `docs/` 的改動同樣**不要 merge 回 `main`**。
 
 ---
