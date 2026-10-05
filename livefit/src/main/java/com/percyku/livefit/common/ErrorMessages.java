@@ -42,6 +42,10 @@ public final class ErrorMessages {
     public static final String GITHUB_VERIFY_FAILED = "GitHub 登入驗證失敗";
     public static final String GITHUB_NOT_CONFIGURED = "尚未設定 GitHub 登入";
     public static final String GITHUB_NO_VERIFIED_EMAIL = "此 GitHub 帳號沒有已驗證的 Email，無法登入";
+    public static final String FACEBOOK_VERIFY_FAILED = "Facebook 登入驗證失敗";
+    public static final String FACEBOOK_NOT_CONFIGURED = "尚未設定 Facebook 登入";
+    public static final String FACEBOOK_NO_EMAIL = "此 Facebook 帳號沒有提供 Email，無法登入";
+    public static final String SOCIAL_EMAIL_REGISTERED = "此 Email 已註冊，請改用原本的方式登入";
     public static final String SOCIAL_ACCOUNT_NO_PASSWORD = "此帳號使用第三方登入，無法修改密碼";
 
     public static final String USER_NOT_FOUND = "使用者不存在";

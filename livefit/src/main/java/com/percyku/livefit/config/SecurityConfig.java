@@ -32,7 +32,7 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableConfigurationProperties({JwtProperties.class, GoogleProperties.class,
-        GithubProperties.class, OAuthProperties.class})
+        GithubProperties.class, FacebookProperties.class, OAuthProperties.class})
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

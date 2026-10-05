@@ -31,6 +31,7 @@ public class UserIdentity {
     // 而 ddl-auto=update 之後不會更新它，新增平台時寫入會失敗
     public static final String PROVIDER_GOOGLE = "GOOGLE";
     public static final String PROVIDER_GITHUB = "GITHUB";
+    public static final String PROVIDER_FACEBOOK = "FACEBOOK";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
