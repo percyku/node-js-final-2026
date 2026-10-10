@@ -40,6 +40,7 @@ Node 版（`backend/`）沒有任何改動。`frontend/` 與 `docs/openapi.yaml`
 | `dto/user/ProfileResponse`、`common/ErrorMessages`、`controller/UserController` | 配合上面的調整 |
 | `frontend/src/pages/user/ProfileView.vue` | 沒有密碼時隱藏舊密碼欄位、改稱「設定密碼」；成功後清空表單並重新取得資料 |
 | `frontend/src/router/index.js` | profile 回 401 時清掉 cookie 與 store |
+| `frontend/src/utils/swalHandler.js` | 新增 `密碼已設定` 的成功訊息 |
 | `docs/openapi.yaml` | 更新 `/api/users/profile` 與 `/api/users/password` |
 | `src/test/` | `UserServiceSocialLoginTest` 12 → 18 項；`JwtTokenProviderTest` 3 → 4 項 |
 
@@ -55,11 +56,16 @@ Node 版（`backend/`）沒有任何改動。`frontend/` 與 `docs/openapi.yaml`
 - `vite build` 通過。
 - 升級 SQL 在本機 `livefit` 執行：兩個已綁 Google / GitHub 的帳號被標成已驗證、`token_version` 變成 1；當時資料庫裡沒有 Facebook 綁定，這兩個帳號也都沒有密碼，所以沒有東西被清掉。再執行一次影響 0 筆。
 - 用真實帳號在瀏覽器跑了兩輪「先 Facebook、再同 email 的 Google」，以後端 log 與資料庫確認：Facebook 建立帳號 → Google 登入時 log 出現 `已清除原本的登入方式` → 帳號只剩 Google 綁定、`email_verified=true`、`token_version=1` → 再用 Facebook 登入回 409 `此 Email 已註冊，請改用原本的方式登入`。
+- 用無頭 Chromium 實際操作前端 22 項全數通過（測試帳號用完即刪）：
+  - 已登入的視窗在帳號被接管後站內換頁 → 導回登入頁、token cookie 被清掉、沒有未捕捉的例外，之後開公開頁面正常；用原本的密碼登入顯示 `使用者不存在或密碼輸入錯誤`。
+  - 無密碼帳號的密碼分頁顯示「設定密碼」、沒有舊密碼欄位、有 5 分鐘的說明；兩次輸入不一致被擋下；設定成功後分頁變回「修改密碼」、表單清空，另一個視窗可用新密碼登入。
+  - 登入超過 5 分鐘後設定密碼被拒絕，顯示 `為了確認是本人操作，請重新登入後再設定密碼`，資料庫仍沒有密碼。
+- 這輪實測前發現並修正一個前端問題：設定成功時用的訊息代碼 `密碼已設定` 沒有登記在 `utils/swalHandler.js`，會跳出標題為「錯誤」的視窗。已補上。
 
 ### 尚未驗證
 
-- 上面那兩輪只核對了後端 log 與資料庫。前端畫面沒有逐項確認：被接管的那個視窗換頁後是否導回登入頁、409 的訊息是否顯示。
-- 瀏覽器上還沒測的流程：設定密碼的畫面、5 分鐘限制、接管密碼註冊的帳號。
+- 「按下 Google / GitHub 登入後接管密碼註冊的帳號」沒有在瀏覽器實測。上面的無頭瀏覽器測試是用 SQL 直接製造接管後的狀態（清密碼、`token_version` 加一），驗的是前端的反應；真正由第三方登入觸發接管只測過「先 Facebook」那一種。
+- 接管後再用 Facebook 登入時，畫面上是否顯示 409 的訊息沒有確認（後端確實回了 409）。
 - 升級 SQL「清密碼、刪 Facebook 綁定」那兩個動作沒有實際資料可以驗到。
 - 兩個時間差的修正是用「拿接管前的版本號直接呼叫 service」與併發測試驗證的，沒有做到在兩個交易之間精確插入的測試。
 

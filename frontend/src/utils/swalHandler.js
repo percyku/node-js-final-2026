@@ -24,6 +24,11 @@ const swalCodes = {
     text: "已成功更新密碼",
     state: "success",
   },
+  密碼已設定: {
+    title: "成功",
+    text: "已成功設定密碼，之後可以用 Email 與密碼登入",
+    state: "success",
+  },
   請選擇圖片檔案: {
     title: "錯誤",
     text: "請選擇圖片檔案",
