@@ -167,7 +167,7 @@ Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜�
 | `livefit/.env` | Spring Boot 原生 `spring.config.import=optional:file:.env[.properties]`，範本 `livefit/.env.example` |
 | `frontend/.env` | Vite（僅本機 `npm run dev` / `npm run build`），範本 `frontend/.env.example` |
 
-`livefit/.env` 是 **Java properties 格式**：`KEY=value`，不加引號、不寫 `export`（與根目錄那份給 `dotenv` 用的規則不同）。`JWT_SECRET` 必須 **≥32 個位元組**，否則 `JwtTokenProvider` 會在啟動時拋錯。
+`livefit/.env` 是 **Java properties 格式**：`KEY=value`，不加引號、不寫 `export`（與根目錄那份給 `dotenv` 用的規則不同）。`JWT_SECRET` **必填且沒有預設值**，留空或少於 32 個位元組時 `JwtTokenProvider` 會在啟動時拋錯；用 `openssl rand -hex 32` 產生（說明在 `docs/springboot-migration-plan.md` §2）。**不要在 `application.properties` 加回預設密鑰**。
 
 ## 注意事項
 

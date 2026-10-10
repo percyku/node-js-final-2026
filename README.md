@@ -343,7 +343,7 @@ docker compose up -d postgres
 docker compose exec postgres psql -U student -d fitness -c "CREATE DATABASE livefit"
 
 # 3. 設定環境變數
-cd livefit && cp .env.example .env    # 記得把 JWT_SECRET 換成 32 字元以上的隨機字串
+cd livefit && cp .env.example .env    # JWT_SECRET 必填，用 openssl rand -hex 32 產生後貼上，留空會無法啟動
 
 # 4. 啟動（必須在 livefit/ 下執行，否則讀不到 .env）
 mvn spring-boot:run

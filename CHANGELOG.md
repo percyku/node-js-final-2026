@@ -6,6 +6,42 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-10 — 移除 JWT 預設密鑰
+
+分支：`fix/jwt-default-secret`（預計 merge 回 `springboot-backend`）
+
+Node 版（`backend/`）沒有任何改動。
+
+### 改了什麼
+
+`application.properties` 原本是 `jwt.secret=${JWT_SECRET:一段寫死的字串}`。沒有 `livefit/.env` 時會用那段字串簽 token，而它就在版控裡：看得到 repo 的人可以自己簽出任何使用者（含教練）的 JWT。
+
+| 檔案 | 內容 |
+|---|---|
+| `livefit/src/main/resources/application.properties` | `jwt.secret=${JWT_SECRET:}`，不再有預設值 |
+| `security/JwtTokenProvider` | 留空時啟動失敗，訊息為 `尚未設定 JWT_SECRET…`；長度不足的檢查與訊息保留 |
+| `livefit/.env.example` | `JWT_SECRET=` 改為空白，註解附上產生指令 |
+| `docs/springboot-migration-plan.md` §2 | 新增「產生 `JWT_SECRET`」：產生、設定、確認的步驟與注意事項 |
+| `src/test/` | 新增 `JwtTokenProviderTest`（3 項，不需要資料庫） |
+
+### 行為差異
+
+- **沒有設定 `JWT_SECRET` 的環境升級後會無法啟動**，這是刻意的。照 `docs/springboot-migration-plan.md` §2 產生一把填進 `livefit/.env` 即可。
+- 已經在 `.env` 設定過 `JWT_SECRET` 的環境不受影響，既有 token 照常有效。
+- 原本靠預設密鑰簽發的 token 在換上新密鑰後全部失效，使用者要重新登入。
+
+### 驗證
+
+- 不需要資料庫的 14 項單元測試通過：`JwtTokenProviderTest` 3 項（沒設定、空字串、少於 32 個位元組都拋錯；64 個字元的密鑰可簽發並驗證）、`GithubOAuthClientTest` 6 項、`FacebookOAuthClientTest` 5 項。
+- 文件裡的三個產生指令與 `sed` 一行設定在 macOS 上實測，輸出都是 64 個字元。
+
+### 尚未驗證
+
+- `UserServiceSocialLoginTest` 的 12 項整合測試沒有跑成功：當時 postgres 沒有啟動，Spring context 起不來。這 12 項沒有因為這次改動而失敗，是根本沒執行到。postgres 啟動後要補跑 `cd livefit && mvn test`，預期 26 項。
+- 根目錄 68 項合約測試與實際啟動（`mvn spring-boot:run`）同樣還沒跑。
+
+---
+
 ## 2026-10-05 — Facebook 登入
 
 分支：`feature/facebook-login`（預計 merge 回 `springboot-backend`）

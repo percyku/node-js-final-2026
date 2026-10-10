@@ -35,9 +35,14 @@ public class JwtTokenProvider {
     @PostConstruct
     void init() {
         String secret = properties.getSecret();
-        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+        // 沒有預設值：沒設定就不啟動，避免用一把大家都知道的密鑰簽 token
+        if (secret == null || secret.isBlank()) {
             throw new IllegalStateException(
-                    "JWT_SECRET 至少需要 32 個位元組（HS256 規格要求），請調整環境變數 JWT_SECRET");
+                    "尚未設定 JWT_SECRET。請在 livefit/.env 或環境變數設定，可用 openssl rand -hex 32 產生");
+        }
+        if (secret.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "JWT_SECRET 至少需要 32 個位元組（HS256 規格要求），可用 openssl rand -hex 32 產生");
         }
         this.key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         this.expiration = properties.resolveExpiration();
