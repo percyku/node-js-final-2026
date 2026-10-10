@@ -76,13 +76,13 @@ public class UserController {
     @PutMapping("/profile")
     public ApiResponse<UpdateNameResponse> updateProfile(@AuthenticationPrincipal AuthUser authUser,
                                                          @RequestBody(required = false) UpdateNameRequest request) {
-        return ApiResponse.success(userService.updateName(authUser.getId(), request));
+        return ApiResponse.success(userService.updateName(authUser, request));
     }
 
     @PutMapping("/password")
     public ApiResponse<Object> updatePassword(@AuthenticationPrincipal AuthUser authUser,
                                               @RequestBody(required = false) UpdatePasswordRequest request) {
-        userService.updatePassword(authUser.getId(), request);
+        userService.updatePassword(authUser, request);
         return ApiResponse.success(null);
     }
 

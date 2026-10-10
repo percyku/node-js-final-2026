@@ -22,17 +22,22 @@ import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
+import com.percyku.livefit.security.AuthUser;
 import com.percyku.livefit.security.FacebookOAuthClient;
 import com.percyku.livefit.security.GithubOAuthClient;
 import com.percyku.livefit.security.GoogleIdTokenVerifier;
 import com.percyku.livefit.security.JwtTokenProvider;
 import com.percyku.livefit.security.SocialProfile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -40,6 +45,11 @@ import java.util.function.BiFunction;
 /** 對應 backend/controllers/users.js 的業務邏輯，另加 Node 版沒有的第三方登入 */
 @Service
 public class UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserService.class);
+
+    /** 無密碼帳號設定密碼時，要求這次登入（token 的簽發時間）在這段時間內 */
+    static final Duration SET_PASSWORD_LOGIN_WINDOW = Duration.ofMinutes(5);
 
     private final UserRepository userRepository;
     private final UserIdentityRepository userIdentityRepository;
@@ -141,7 +151,7 @@ public class UserService {
             throw ApiException.badRequest(ErrorMessages.LOGIN_FAILED);
         }
 
-        String token = tokenProvider.createToken(user.getId(), user.getRole());
+        String token = tokenProvider.createToken(user);
         return LoginResponse.of(token, user.getName());
     }
 
@@ -163,7 +173,7 @@ public class UserService {
         }
 
         User user = socialLogin(profile);
-        String token = tokenProvider.createToken(user.getId(), user.getRole());
+        String token = tokenProvider.createToken(user);
         return LoginResponse.of(token, user.getName());
     }
 
@@ -178,6 +188,7 @@ public class UserService {
     /**
      * Facebook 登入：流程同 GitHub。差別是 Facebook 不保證 email 驗證過，
      * 所以只能登入已綁定的帳號或建立新帳號，同 email 已有帳號時回 409，不會自動綁定。
+     * 這樣建立的帳號 email_verified 為 false，信箱本人之後用 Google 或 GitHub 登入時會被 takeOver。
      */
     public LoginResponse facebookLogin(OAuthCodeLoginRequest request) {
         return oauthCodeLogin(request, facebookOAuthClient::fetchProfile);
@@ -201,13 +212,16 @@ public class UserService {
         SocialProfile profile = fetchProfile.apply(request.code().trim(), request.redirectUri());
 
         User user = socialLogin(profile);
-        String token = tokenProvider.createToken(user.getId(), user.getRole());
+        String token = tokenProvider.createToken(user);
         return LoginResponse.of(token, user.getName());
     }
 
     /**
      * 第三方登入共用的帳號對應：依序以平台身分、email 找帳號，都沒有就建立新帳號。
      * 呼叫端要先確認 subject 與 email 都有值。
+     *
+     * 以 email 找到的帳號分兩種：信箱驗證過的（users.email_verified）只新增綁定、密碼保留；
+     * 沒驗證過的代表建立它的人不一定是信箱本人，由 takeOver 清掉原本的登入方式後才綁定。
      */
     private User socialLogin(SocialProfile profile) {
         return userIdentityRepository
@@ -221,12 +235,14 @@ public class UserService {
         try {
             // 綁定與建立都要寫 user_identities，建立還要先寫 users，包成一個交易避免只寫一半
             return transactionTemplate.execute(status -> {
-                User user = userRepository.findByEmail(email).orElse(null);
+                // 鎖住該列：接管會改密碼與 token_version，不能與其他寫入交錯
+                User user = userRepository.findByEmailForUpdate(email).orElse(null);
                 if (user == null) {
                     User created = new User();
                     created.setName(resolveSocialName(profile.name(), email));
                     created.setEmail(email);
                     created.setRole(User.ROLE_USER);
+                    created.setEmailVerified(profile.emailVerified());
                     user = userRepository.save(created);
                 } else if (!profile.emailVerified()) {
                     // 沒驗證過的 email 不能拿來綁定既有帳號，否則任何人都能用別人的信箱接管帳號
@@ -238,8 +254,10 @@ public class UserService {
                             .findByProviderAndProviderUserId(profile.provider(), profile.subject())
                             .map(UserIdentity::getUser)
                             .orElseThrow(() -> ApiException.conflict(ErrorMessages.EMAIL_TAKEN));
+                } else if (!user.isEmailVerified()) {
+                    takeOver(user, profile.provider());
                 }
-                // 綁定只新增一筆身分，原本的密碼保留，之後兩種方式都能登入
+                // 信箱驗證過的帳號只新增一筆身分，原本的密碼保留，之後兩種方式都能登入
                 userIdentityRepository.save(new UserIdentity(user, profile.provider(), profile.subject()));
                 return user;
             });
@@ -252,6 +270,34 @@ public class UserService {
                     // 撞到的是 email 或別的平台帳號搶先綁定，照一般的重複註冊處理
                     .orElseThrow(() -> ApiException.conflict(ErrorMessages.EMAIL_TAKEN));
         }
+    }
+
+    /**
+     * 信箱本人第一次用驗證過的平台登入，而這個信箱已經被人用沒驗證過的方式（密碼註冊、Facebook）建了帳號。
+     * 建帳號的可能是本人，也可能是冒用信箱的人，兩者無從分辨，所以一律把原本的登入方式清掉：
+     * 密碼、既有的第三方綁定、已簽發的 token 都作廢，之後這個帳號只有信箱本人進得來。
+     * 帳號裡的其他資料（名稱、角色、購買與報名紀錄）不動。必須在已鎖住該列的交易內呼叫。
+     */
+    private void takeOver(User user, String provider) {
+        user.setPassword(null);
+        userIdentityRepository.deleteAllByUserId(user.getId());
+        user.setTokenVersion(user.getTokenVersion() + 1);
+        user.setEmailVerified(true);
+        log.info("帳號 {} 的信箱由 {} 登入驗證，已清除原本的登入方式", user.getId(), provider);
+    }
+
+    /**
+     * 登入後要改 users 的操作共用：鎖住該列，並確認通過驗證之後 token 沒有被作廢。
+     * JwtAuthenticationFilter 的檢查與這裡的寫入不在同一個交易，中間帳號可能剛被接管；
+     * 少了這一步，接管前送出的請求就能在接管後替無密碼的帳號設定密碼。必須在交易內呼叫。
+     */
+    private User lockCurrentUser(AuthUser authUser, String notFoundMessage) {
+        User user = userRepository.findByIdForUpdate(authUser.getId())
+                .orElseThrow(() -> ApiException.badRequest(notFoundMessage));
+        if (user.getTokenVersion() != authUser.getTokenVersion()) {
+            throw ApiException.unauthorized(ErrorMessages.TOKEN_INVALID);
+        }
+        return user;
     }
 
     /** 平台沒給名稱時用 email 的 @ 前段，並截到 users.name 的長度上限 */
@@ -270,17 +316,16 @@ public class UserService {
     }
 
     public ProfileResponse getProfile(User user) {
-        return ProfileResponse.of(user.getName(), user.getEmail());
+        return ProfileResponse.of(user.getName(), user.getEmail(), user.getPassword() != null);
     }
 
     @Transactional
-    public UpdateNameResponse updateName(UUID userId, UpdateNameRequest request) {
+    public UpdateNameResponse updateName(AuthUser authUser, UpdateNameRequest request) {
         if (request == null || !isValidName(request.name())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> ApiException.badRequest(ErrorMessages.UPDATE_USER_PROFILE_FAILED));
+        User user = lockCurrentUser(authUser, ErrorMessages.UPDATE_USER_PROFILE_FAILED);
 
         String newName = request.name().trim();
         // openapi 明訂：新名稱與目前名稱相同要回 400，這是規格不是 bug
@@ -293,10 +338,23 @@ public class UserService {
         return UpdateNameResponse.of(newName);
     }
 
+    /**
+     * 有密碼的帳號：用舊密碼換新密碼，檢查順序依 openapi。
+     * 沒有密碼的帳號（純第三方登入建立，或被 takeOver 清掉密碼）：不需要舊密碼，直接設定，見 setFirstPassword。
+     */
     @Transactional
-    public void updatePassword(UUID userId, UpdatePasswordRequest request) {
-        if (request == null
-                || !ValidUtils.isValidString(request.password())
+    public void updatePassword(AuthUser authUser, UpdatePasswordRequest request) {
+        if (request == null) {
+            throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
+        }
+
+        User user = lockCurrentUser(authUser, ErrorMessages.UPDATE_FAILED);
+        if (user.getPassword() == null) {
+            setFirstPassword(user, authUser, request);
+            return;
+        }
+
+        if (!ValidUtils.isValidString(request.password())
                 || !ValidUtils.isValidString(request.newPassword())
                 || !ValidUtils.isValidString(request.confirmNewPassword())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
@@ -312,16 +370,32 @@ public class UserService {
         if (!request.newPassword().equals(request.confirmNewPassword())) {
             throw ApiException.badRequest(ErrorMessages.PASSWORD_CONFIRM_MISMATCH);
         }
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> ApiException.badRequest(ErrorMessages.UPDATE_FAILED));
-
-        if (user.getPassword() == null) {
-            throw ApiException.badRequest(ErrorMessages.SOCIAL_ACCOUNT_NO_PASSWORD);
-        }
-
         if (!passwordEncoder.matches(request.password(), user.getPassword())) {
             throw ApiException.badRequest(ErrorMessages.PASSWORD_WRONG);
+        }
+
+        user.setPassword(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+    }
+
+    /** 無密碼帳號設定密碼：沒有舊密碼可驗，request.password() 不論帶什麼都忽略 */
+    private void setFirstPassword(User user, AuthUser authUser, UpdatePasswordRequest request) {
+        // 沒有舊密碼把關，改成要求剛登入過：否則偷到 token 的人可以替帳號設一組密碼，
+        // 把最多只能用到 token 過期的存取權變成永久的
+        Instant issuedAt = authUser.getTokenIssuedAt();
+        if (issuedAt == null || issuedAt.isBefore(Instant.now().minus(SET_PASSWORD_LOGIN_WINDOW))) {
+            throw ApiException.badRequest(ErrorMessages.SET_PASSWORD_RELOGIN);
+        }
+        if (!ValidUtils.isValidString(request.newPassword())
+                || !ValidUtils.isValidString(request.confirmNewPassword())) {
+            throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
+        }
+        if (!ValidUtils.isValidPassword(request.newPassword())
+                || !ValidUtils.isValidPassword(request.confirmNewPassword())) {
+            throw ApiException.badRequest(ErrorMessages.PASSWORD_RULE);
+        }
+        if (!request.newPassword().equals(request.confirmNewPassword())) {
+            throw ApiException.badRequest(ErrorMessages.PASSWORD_CONFIRM_MISMATCH);
         }
 
         user.setPassword(passwordEncoder.encode(request.newPassword()));

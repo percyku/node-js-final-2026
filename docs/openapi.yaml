@@ -1041,12 +1041,14 @@ paths:
         - M2 會員系統
       summary: 取得本人的個人資料
       description: |
-        回傳目前登入者的 name 與 email（只有這兩個欄位）。
+        回傳目前登入者的 name 與 email。Spring Boot 版另外多回一個 has_password。
 
         行為備註：
         - 前端每次切換頁面（只要身上有 token）都會打一次這支來確認登入狀態——
           這支沒做好，整個登入後的畫面都進不去。
-        - 成功 200，data.user 形狀固定是 { name, email }。
+        - 成功 200，data.user 是 { name, email }。
+        - 僅 Spring Boot 版：多一個 has_password（布林）。用第三方登入建立、或登入方式被重設過的帳號沒有密碼，
+          前端依此決定「修改密碼」要不要顯示舊密碼欄位。Node 版沒有這個欄位，前端當成 true。
       security:
         - bearerAuth: []
       responses:
@@ -1072,6 +1074,10 @@ paths:
                           email:
                             type: string
                             example: xiaohua@example.com
+                          has_password:
+                            type: boolean
+                            description: 僅 Spring Boot 版。帳號目前有沒有密碼
+                            example: true
               example:
                 status: success
                 data:
@@ -1245,9 +1251,14 @@ paths:
            不是只檢查新密碼，舊密碼格式不符也會擋 → 400「密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字」
         3. ⚠️ 新密碼跟舊密碼相同會被擋 → 400「新密碼不能與舊密碼相同」
         4. new_password 與 confirm_new_password 不一致 → 400「新密碼與驗證新密碼不一致」
-        5. 用第三方登入（Google、GitHub、Facebook）建立、沒有密碼的帳號 → 400「此帳號使用第三方登入，無法修改密碼」（僅 Spring Boot 版；
-           先用密碼註冊、之後才綁定第三方帳號的不受影響，照常可以修改）
-        6. 舊密碼比對錯誤 → 400「密碼輸入錯誤」
+        5. 舊密碼比對錯誤 → 400「密碼輸入錯誤」
+
+        僅 Spring Boot 版：帳號沒有密碼時（用第三方登入建立，或登入方式被重設過；GET /api/users/profile 的
+        has_password 為 false）這支改為「設定密碼」，不需要舊密碼，password 欄位不論帶什麼都忽略：
+        1. 這次登入超過 5 分鐘 → 400「為了確認是本人操作，請重新登入後再設定密碼」
+        2. new_password、confirm_new_password 任一缺漏或為空字串 → 400「欄位未填寫正確」
+        3. 兩者任一不符密碼規則 → 400（訊息同上方第 2 點）
+        4. 兩者不一致 → 400「新密碼與驗證新密碼不一致」
         - 成功 200，data 是 null（沒有任何資料要回）。
       security:
         - bearerAuth: []
@@ -1302,7 +1313,7 @@ paths:
             - 三欄任一不符密碼規則：「密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字」
             - 新密碼與舊密碼相同：「新密碼不能與舊密碼相同」
             - 新密碼與確認新密碼不一致：「新密碼與驗證新密碼不一致」
-            - 用第三方登入建立、沒有密碼的帳號：「此帳號使用第三方登入，無法修改密碼」
+            - 沒有密碼的帳號設定密碼時，這次登入超過 5 分鐘（僅 Spring Boot 版）：「為了確認是本人操作，請重新登入後再設定密碼」
             - 舊密碼比對錯誤：「密碼輸入錯誤」
           content:
             application/json:
@@ -1335,11 +1346,11 @@ paths:
                   value:
                     status: failed
                     message: 新密碼與驗證新密碼不一致
-                第三方登入帳號無密碼:
-                  summary: 用第三方登入建立的帳號沒有密碼可改（僅 Spring Boot 版）
+                設定密碼需重新登入:
+                  summary: 沒有密碼的帳號設定密碼時，這次登入超過 5 分鐘（僅 Spring Boot 版）
                   value:
                     status: failed
-                    message: 此帳號使用第三方登入，無法修改密碼
+                    message: 為了確認是本人操作，請重新登入後再設定密碼
                 舊密碼錯誤:
                   summary: 舊密碼比對錯誤
                   value:

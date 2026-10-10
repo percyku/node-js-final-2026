@@ -5,6 +5,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -16,9 +17,11 @@ import java.util.UUID;
 public class AuthUser implements UserDetails {
 
     private final User user;
+    private final Instant tokenIssuedAt;
 
-    public AuthUser(User user) {
+    public AuthUser(User user, Instant tokenIssuedAt) {
         this.user = user;
+        this.tokenIssuedAt = tokenIssuedAt;
     }
 
     public User getUser() {
@@ -27,6 +30,16 @@ public class AuthUser implements UserDetails {
 
     public UUID getId() {
         return user.getId();
+    }
+
+    /** 通過驗證當下的 users.token_version（與 token 的 ver 相同），寫入前要在交易內再比對一次 */
+    public int getTokenVersion() {
+        return user.getTokenVersion();
+    }
+
+    /** token 的簽發時間，也就是這次登入的時間；token 沒有 iat 時為 null */
+    public Instant getTokenIssuedAt() {
+        return tokenIssuedAt;
     }
 
     @Override

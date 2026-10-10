@@ -59,14 +59,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             Claims claims = tokenProvider.parse(token);
             Optional<User> user = resolveUser(claims);
-            if (user.isEmpty()) {
-                // token 有效但查無使用者
+            // 版本不符代表帳號被信箱本人接管過，接管前簽發的 token 一律作廢
+            if (user.isEmpty()
+                    || user.get().getTokenVersion() != JwtTokenProvider.tokenVersionOf(claims)) {
+                // token 有效但查無使用者，或已被作廢
                 request.setAttribute(AUTH_ERROR_ATTRIBUTE, ErrorMessages.TOKEN_INVALID);
                 filterChain.doFilter(request, response);
                 return;
             }
 
-            AuthUser authUser = new AuthUser(user.get());
+            AuthUser authUser = new AuthUser(user.get(),
+                    claims.getIssuedAt() == null ? null : claims.getIssuedAt().toInstant());
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(authUser, null, authUser.getAuthorities());
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

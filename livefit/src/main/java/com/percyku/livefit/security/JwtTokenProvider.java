@@ -1,6 +1,7 @@
 package com.percyku.livefit.security;
 
 import com.percyku.livefit.config.JwtProperties;
+import com.percyku.livefit.entity.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import jakarta.annotation.PostConstruct;
@@ -12,17 +13,19 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
-import java.util.UUID;
 
 /**
- * 以 HS256 簽發／驗證 JWT，payload 與 Node 版一致：{ id, role, iat, exp }。
+ * 以 HS256 簽發／驗證 JWT，payload 是 Node 版的 { id, role, iat, exp } 再加上 ver。
  * openapi 明訂前端會自行 decode 取用 id 與 role，欄位名稱不可更動。
+ * ver 是簽發當下的 users.token_version，JwtAuthenticationFilter 用它判斷 token 是否已被作廢。
  */
 @Component
 public class JwtTokenProvider {
 
     /** HS256 依 RFC 7518 要求金鑰至少 256 bit，即 32 個位元組 */
     private static final int MIN_SECRET_BYTES = 32;
+
+    private static final String CLAIM_VERSION = "ver";
 
     private final JwtProperties properties;
     private SecretKey key;
@@ -48,11 +51,13 @@ public class JwtTokenProvider {
         this.expiration = properties.resolveExpiration();
     }
 
-    public String createToken(UUID userId, String role) {
+    /** 收整個 User 而不是個別欄位，避免呼叫端漏帶 token_version */
+    public String createToken(User user) {
         Instant now = Instant.now();
         return Jwts.builder()
-                .claim("id", userId.toString())
-                .claim("role", role)
+                .claim("id", user.getId().toString())
+                .claim("role", user.getRole())
+                .claim(CLAIM_VERSION, user.getTokenVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(expiration)))
                 .signWith(key, Jwts.SIG.HS256)
@@ -66,5 +71,11 @@ public class JwtTokenProvider {
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+    }
+
+    /** 這個功能上線前簽發的 token 沒有 ver，視為 0（與 users.token_version 的預設值相同） */
+    public static int tokenVersionOf(Claims claims) {
+        Integer version = claims.get(CLAIM_VERSION, Integer.class);
+        return version == null ? 0 : version;
     }
 }
