@@ -69,6 +69,24 @@ cd livefit && mvn test                # 第三方登入的整合測試，需要 
 >
 > **`./mvnw` 在本機會失敗**：macOS 的 `mktemp -d` 忽略 `TMPDIR`，wrapper 下載 Maven 時會回 `cannot create temp dir`，所以不要用它，改用上面三種方式之一。
 
+### Spring Boot 版專用的 Compose（`compose.livefit.yml`）
+
+不含 Node 版後端，project name 是 `livefit-final`，有自己的 `pgData` volume，postgres 直接建立 `livefit` 資料庫。變數插值讀 `livefit/.env`，**每個指令都要帶 `--env-file livefit/.env`**。
+
+```bash
+# 開發期：只起 postgres、frontend、swagger，livefit 在本機用 mvn spring-boot:run 跑
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d
+# 整套：livefit 也用容器跑（放在 app profile，預設不啟動）
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
+# 清空重來
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+```
+
+- 與根目錄 `docker-compose.yml` 佔用相同的 port（3000 / 8081 / 5432 / 8080），**兩組不能同時啟動**，切換前先 `docker compose stop` 另一組。
+- 前端的 `VITE_GOOGLE_CLIENT_ID` 等三個 build arg 直接取 `livefit/.env` 的 `GOOGLE_CLIENT_ID`、`GITHUB_CLIENT_ID`、`FACEBOOK_APP_ID`；改了這些值要加 `--build` 重建前端。
+- `livefit` 容器的密鑰由 `env_file: ./livefit/.env` 帶入，`PORT`、`DB_HOST`、`DB_PORT`、`DB_DATABASE` 由 compose 覆蓋。`livefit/.env` 的值若含 `$` 要寫成 `$$`。
+- project name 不要改成 `livefit`：本機已有同名的 compose project（別的練習專案），會共用到它的 volume。
+
 ### 測試
 
 ```bash
@@ -95,6 +113,7 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 | `backend/` | `fitness` | TypeORM `synchronize: true`（`DB_SYNCHRONIZE=true`） |
 | `livefit/` | `livefit` | Hibernate `ddl-auto=update`（`.env` 的 `DDL_AUTO`） |
 
+- 上表是用根目錄 `docker-compose.yml` 的情況。改用 `compose.livefit.yml` 時是另一個 postgres 容器與 volume，裡面只有 `livefit` 資料庫且會自動建立，下面這一點不適用。
 - **`livefit` 資料庫不會自動建立**：postgres 容器只建 `fitness`。`pgData` volume 清空後（例如 `npm run db:reset`）要重新執行 `docker compose exec postgres psql -U student -d fitness -c "CREATE DATABASE livefit"`，否則 Spring Boot 啟動會失敗。
 - **不要把 `livefit/.env` 的 `DB_DATABASE` 指回 `fitness`**：`ddl-auto=update` 會去改 Node 版的 schema。
 - 兩個資料庫的資料不互通，帳號要各自註冊。

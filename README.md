@@ -355,6 +355,25 @@ port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` �
 
 > 沒有安裝 Maven（`command not found: mvn`）時，可以 `brew install maven`，其他做法見 [`CLAUDE.md`](CLAUDE.md)。
 
+### 用 Spring Boot 版專用的 Compose 跑（不含 Node 版後端）
+
+`compose.livefit.yml` 只有前端、Swagger、PostgreSQL 與 `livefit`，有自己的 volume，`livefit` 資料庫會自動建立，不需要上面的步驟 1、2。先完成步驟 3 的 `livefit/.env`，再擇一：
+
+```bash
+# 開發期：只起前端、Swagger、資料庫，後端在本機跑（cd livefit && mvn spring-boot:run）
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d
+
+# 整套：後端也用容器跑，不需要本機的 JDK 與 Maven
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
+
+# 清空資料庫重來
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+```
+
+`livefit` 服務放在 `app` profile，沒帶 `--profile app` 時不會啟動，這樣開發期改程式不必每次重建 image。
+
+這一組與根目錄 `docker-compose.yml` 佔用相同的 port（3000、8081、5432、8080），**不能同時啟動**；切換前先在根目錄執行 `docker compose stop`。兩組的資料庫各自獨立，帳號不互通。
+
 ### 啟用 Google 登入（選用）
 
 不設定也能正常啟動，只是登入頁不會出現 Google 按鈕。
@@ -417,9 +436,9 @@ API_BASE_URL=http://localhost:8085 npm test     # 跑在其他 port 時
 
 ## 已知限制
 
-- **不含 Dockerfile**，不參與容器化驗收
-- **不含單元測試**，驗證依靠上述的合約測試
+- 有 Dockerfile 與專用的 `compose.livefit.yml`，但**不參與作業的容器化驗收**（驗收只看根目錄 `docker-compose.yml` 的 `backend` 服務）
+- 單元 / 整合測試只涵蓋第三方登入與 JWT（`cd livefit && mvn test`），其餘依靠上述的合約測試
 - `POST /api/upload` 是 openapi 標明的選做加分題，兩套後端都未實作
-- `livefit` 資料庫要手動建立一次（見上方步驟 2），之後的資料表才會自動建立
+- 用根目錄 `docker-compose.yml` 的 postgres 時，`livefit` 資料庫要手動建立一次（見上方步驟 2），之後的資料表才會自動建立；用 `compose.livefit.yml` 則不必
 - 兩個資料庫的資料不互通，Node 版與 Spring Boot 版的帳號要各自註冊
 - Google 登入只有 Spring Boot 版有；為此改過 `frontend/` 與 `docs/openapi.yaml`，**這些改動不要 merge 回 `main`**（作業規定這兩個目錄不可修改）

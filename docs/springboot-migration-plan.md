@@ -693,3 +693,38 @@ COMMIT;
 - 用無頭 Chromium 實際操作前端 22 項通過：被接管後站內換頁會導回登入頁並清掉 cookie、設定密碼的畫面與成功後的切換、登入超過 5 分鐘時被拒絕。接管後的狀態是用 SQL 直接製造的。
 - 需要真實帳號的兩項由使用者在瀏覽器手動確認（2026-10-10）：由 Google / GitHub 登入實際接管密碼註冊的帳號，以及接管後再用 Facebook 登入時畫面顯示 409 的訊息。
 - **尚未驗證**：升級 SQL「清密碼、刪 Facebook 綁定」那兩個動作沒有實際資料可以驗到；兩個時間差的修正沒有做到在兩個交易之間精確插入的測試。
+
+---
+
+## 12. 容器化：Spring Boot 版專用的 Compose（`compose.livefit.yml`）
+
+目標是讓 `livefit/` 之後能取代 Node 版後端，整套用 Docker Compose 啟動，同時不影響還在繼續開發的功能。
+
+### 12.1 決策
+
+| 決策 | 理由 |
+|---|---|
+| 另開 `compose.livefit.yml`，不改根目錄的 `docker-compose.yml` | 原檔的 `backend` 服務是 `main` 上 GitHub Actions 驗收的對象，`npm run db:reset` 也依賴它 |
+| project name `livefit-final`，自己的 `pgData` volume，`POSTGRES_DB=livefit` | 資料庫自動建立，不必再手動 `CREATE DATABASE`；與 Node 版的 `fitness` 徹底分開 |
+| `livefit` 服務放在 `app` profile，預設不啟動 | 後端還在開發：平常在本機 `mvn spring-boot:run`，要整套驗證時才加 `--profile app` |
+| 前端的三個 `VITE_*` build arg 取 `livefit/.env` 的 `GOOGLE_CLIENT_ID`、`GITHUB_CLIENT_ID`、`FACEBOOK_APP_ID` | 這三個值前後端本來就必須相同，只填一處 |
+| 密鑰用 `env_file: ./livefit/.env` 帶入，不寫進 compose | compose 檔進版控，`.env` 不進 |
+
+project name 沒有取 `livefit`：本機已有同名的 compose project（另一個練習專案），會直接共用到它的 `livefit_pgData`，`down -v` 還會把它刪掉。
+
+### 12.2 檔案
+
+- `compose.livefit.yml`：`frontend`、`swagger`、`postgres` 與 `livefit`（`app` profile）。`livefit` 的 `environment` 覆蓋 `PORT=8080`、`DB_HOST=postgres`、`DB_PORT=5432`、`DB_DATABASE=livefit`，優先權高於 `env_file`，所以 `livefit/.env` 維持本機開發用的值即可。
+- `livefit/Dockerfile`：多階段。build 用 `maven:3.9-eclipse-temurin-21`（wrapper jar 沒進版控，不用 `./mvnw`），先複製 `pom.xml` 下載相依套件再複製 `src`；`-DskipTests`，因為測試要連資料庫。runtime 用 `eclipse-temurin:21-jre-alpine`，以非 root 使用者執行。
+- `livefit/.dockerignore`：排除 `target/`、`.env` 等。容器內沒有 `.env` 檔，`spring.config.import=optional:file:.env[.properties]` 允許缺檔，設定全由環境變數帶入。
+
+指令見 `README.md` 延伸章節或 `CLAUDE.md`。每個指令都要帶 `--env-file livefit/.env`，否則前端的第三方登入按鈕不會出現。
+
+### 12.3 驗證結果（2026-10-10）
+
+- 整套模式：`livefit` 容器變成 `healthy`，`GET /healthcheck` 回 `OK`，Hibernate 在空的 `livefit` 資料庫建出 9 張表。
+- 根目錄 68 項合約測試對容器版 `livefit`（port 8080）全數通過。
+- 前端容器的 bundle 內找得到三個平台的 client id。
+- `down -v` 後不帶 profile 重新 `up`：只啟動 `frontend`、`swagger`、`postgres`，`livefit` 資料庫自動建立。
+- 開發模式下在本機執行 `cd livefit && mvn test`，33 項通過。
+- **尚未驗證**：沒有在瀏覽器實際操作 `http://localhost:3000`；GitHub、Facebook 在 3000 的 callback 能否共用同一個 OAuth App 仍未實測（§11.6）；原本的 `docker-compose.yml` 沒有改動，但這次沒有重新啟動 Node 版那一組確認。

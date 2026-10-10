@@ -6,6 +6,32 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-10 — Spring Boot 版專用的 Docker Compose
+
+分支：`springboot-backend`
+
+Node 版（`backend/`）與根目錄的 `docker-compose.yml` 沒有任何改動。
+
+### 新增
+
+- `compose.livefit.yml`：只含前端、Swagger、PostgreSQL 與 `livefit`，不含 Node 版後端。project name `livefit-final`，有自己的 volume，`livefit` 資料庫自動建立。
+- `livefit/Dockerfile`、`livefit/.dockerignore`：多階段建置，JRE 21，非 root 使用者。
+
+### 用法
+
+`livefit` 服務放在 `app` profile。開發期不帶 profile，只起前端、Swagger、資料庫，後端在本機跑；要整套驗證時加 `--profile app --build`。每個指令都要帶 `--env-file livefit/.env`。完整指令在 `README.md` 延伸章節，設計理由在 `docs/springboot-migration-plan.md` §12。
+
+### 注意
+
+- 與根目錄 `docker-compose.yml` 佔用相同的 port，兩組不能同時啟動。
+- 新的 volume 是空的，原本在 `fitness` 那個 volume 裡的 `livefit` 資料庫不會自動搬過來。
+
+### 驗證
+
+68 項合約測試對容器版全數通過；`mvn test` 33 項通過。瀏覽器操作與 3000 的第三方登入 callback 尚未實測。
+
+---
+
 ## 2026-10-10 — 擋住反方向的帳號接管
 
 分支：`fix/social-prehijack`（疊在 `fix/jwt-default-secret` 之上，預計 merge 回 `springboot-backend`）

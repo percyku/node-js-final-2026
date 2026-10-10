@@ -1,0 +1,85 @@
+# Spring Boot 版（livefit/）專用的 Compose，不含 Node 版後端。
+# 與根目錄的 docker-compose.yml 各自獨立：project name、volume 都不同，但佔用相同的 port，不能同時啟動。
+#
+# 變數插值讀 livefit/.env，所以每個指令都要帶 --env-file：
+#   開發期（livefit 在本機用 mvn spring-boot:run 跑）
+#     docker compose -f compose.livefit.yml --env-file livefit/.env up -d
+#   整套（livefit 也用容器跑）
+#     docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
+#   清空重來
+#     docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+
+# 不取名 livefit：容易與其他專案的 compose project 撞名，共用到別人的 pgData volume
+name: livefit-final
+
+volumes:
+  pgData:
+
+services:
+  # 健身房前端
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://127.0.0.1:8080/api/
+        # 第三方登入的 client id 前後端必須相同，直接取 livefit/.env 的值；未設定時前端不顯示對應的按鈕
+        - VITE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+        - VITE_GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+        - VITE_FACEBOOK_APP_ID=${FACEBOOK_APP_ID:-}
+    ports:
+      - "3000:80"
+
+  # API 文件（Swagger UI）
+  swagger:
+    image: swaggerapi/swagger-ui:v5.17.14
+    environment:
+      - SWAGGER_JSON=/openapi.yaml
+    volumes:
+      - ./docs/openapi.yaml:/openapi.yaml:ro
+    ports:
+      - "8081:8080"
+
+  # PostgreSQL：直接建立 livefit 資料庫，資料表由 Hibernate ddl-auto=update 建立
+  postgres:
+    image: postgres:16.4-alpine3.20
+    environment:
+      - POSTGRES_USER=student
+      - POSTGRES_PASSWORD=student666
+      - POSTGRES_DB=livefit
+    volumes:
+      - pgData:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d livefit"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Spring Boot 後端：放在 app profile，預設不啟動（開發期在本機跑）
+  livefit:
+    profiles: ["app"]
+    build:
+      context: ./livefit
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    # 密鑰（JWT_SECRET、各平台的 secret）從 livefit/.env 帶入，不寫在這裡
+    env_file:
+      - ./livefit/.env
+    # 容器內必須與本機不同的值；environment 的優先權高於 env_file
+    environment:
+      - PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=livefit
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthcheck || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s

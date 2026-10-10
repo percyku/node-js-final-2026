@@ -1,0 +1,10 @@
+target/
+.env
+.idea/
+.mvn/
+mvnw
+mvnw.cmd
+HELP.md
+.claude/
+.gitignore
+.gitattributes
