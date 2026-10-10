@@ -357,22 +357,64 @@ port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` �
 
 ### 用 Spring Boot 版專用的 Compose 跑（不含 Node 版後端）
 
-`compose.livefit.yml` 只有前端、Swagger、PostgreSQL 與 `livefit`，有自己的 volume，`livefit` 資料庫會自動建立，不需要上面的步驟 1、2。先完成步驟 3 的 `livefit/.env`，再擇一：
+`compose.livefit.yml` 只有前端、Swagger、PostgreSQL 與 `livefit`，有自己的 volume，`livefit` 資料庫會自動建立，不需要上面的步驟 1、2。先完成步驟 3 的 `livefit/.env`。
+
+以下指令都在**專案根目錄**執行，而且都要帶 `--env-file livefit/.env`。
+
+#### 啟動
+
+依後端要怎麼跑二選一，差別只在有沒有 `--profile app`：
 
 ```bash
-# 開發期：只起前端、Swagger、資料庫，後端在本機跑（cd livefit && mvn spring-boot:run）
+# 整套都用容器（含後端），不需要本機的 JDK 與 Maven
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d
+
+# 開發期：只起前端、Swagger、資料庫，後端在本機跑
 docker compose -f compose.livefit.yml --env-file livefit/.env up -d
-
-# 整套：後端也用容器跑，不需要本機的 JDK 與 Maven
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
-
-# 清空資料庫重來
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+cd livefit && mvn spring-boot:run
 ```
 
 `livefit` 服務放在 `app` profile，沒帶 `--profile app` 時不會啟動，這樣開發期改程式不必每次重建 image。
 
-這一組與根目錄 `docker-compose.yml` 佔用相同的 port（3000、8081、5432、8080），**不能同時啟動**；切換前先在根目錄執行 `docker compose stop`。兩組的資料庫各自獨立，帳號不互通。
+改了後端程式、或改了 `livefit/.env` 裡第三方登入的 client id 之後，要在啟動指令後面加 `--build` 才會生效。
+
+#### 確認狀態
+
+```bash
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app ps
+curl http://localhost:8080/healthcheck    # 後端起來會回 OK
+```
+
+| 服務 | 網址 |
+|---|---|
+| 前端 | http://localhost:3000 |
+| 後端 | http://localhost:8080 |
+| Swagger | http://localhost:8081 |
+| PostgreSQL | `localhost:5432`（資料庫 `livefit`） |
+
+#### 關閉
+
+依要關到什麼程度選一個。**一律帶 `--profile app`**，不帶的話後端容器不會被停掉，會繼續佔著 8080。
+
+```bash
+# 停止容器，保留容器與資料（下次啟動最快）
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app stop
+
+# 停止並移除容器，資料庫的資料還在
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down
+
+# 連資料庫一起清空（帳號等資料全部刪除，無法復原）
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+
+# 只關後端容器（例如要改成在本機跑，讓出 8080）
+docker compose -f compose.livefit.yml --env-file livefit/.env --profile app stop livefit
+```
+
+在本機用 `mvn spring-boot:run` 跑的後端不歸 compose 管，在它的終端機按 `Ctrl + C` 關閉。
+
+#### 與 Node 版那一組的關係
+
+這一組與根目錄 `docker-compose.yml` 佔用相同的 port（3000、8081、5432、8080），**不能同時啟動**；啟動時出現 port 已被佔用，先在根目錄執行 `docker compose stop` 停掉 Node 版那一組。兩組的資料庫各自獨立，帳號不互通。
 
 ### 啟用 Google 登入（選用）
 
