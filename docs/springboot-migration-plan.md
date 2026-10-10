@@ -52,7 +52,7 @@
 | `spring.jpa.database-platform=org.hibernate.dialect.PostgreSQL10Dialect` | **Hibernate 6 已移除此類別，會啟動失敗** → 整行刪除，讓 Hibernate 自動偵測 |
 | `ddl-auto=validate` | 改 **`none`**。表是 TypeORM 建的（`credit_packages.name` 無長度、`price_paid numeric(10,2)`、`timestamp without time zone`），`validate` 極易因精度／型別細節誤判而擋住啟動；需求也禁止動 schema |
 | DB 帳密硬寫在檔案 | 改成環境變數佔位：`${DB_HOST:localhost}`、`${DB_PORT:5432}`、`${DB_USERNAME:student}`、`${DB_PASSWORD:student666}`、`${DB_DATABASE:fitness}`，實際值放在 `livefit/.env`（見下方） |
-| 無 JWT 設定 | 新增 `jwt.secret=${JWT_SECRET:...}`、`jwt.expires-day=${JWT_EXPIRES_DAY:30d}`（綁到 `JwtProperties`） |
+| 無 JWT 設定 | 新增 `jwt.secret=${JWT_SECRET:}`（沒有預設值，見下方「產生 `JWT_SECRET`」）、`jwt.expires-day=${JWT_EXPIRES_DAY:30d}`（綁到 `JwtProperties`） |
 | 無時區／序列化設定 | 新增 `spring.jpa.properties.hibernate.jdbc.time_zone=UTC`、`spring.jackson.time-zone=UTC`、`spring.jpa.open-in-view=false` |
 | 找不到路由要回 404 | 新增 `spring.mvc.throw-exception-if-no-handler-found=true`、`spring.web.resources.add-mappings=false` |
 
@@ -83,6 +83,45 @@ spring.config.import=optional:file:.env[.properties]
 
 > ⚠️ **JWT_SECRET 長度**：HS256 依 RFC 7518 要求金鑰至少 32 個位元組，`JwtTokenProvider` 會在啟動時檢查並直接拋錯。
 > 專案根目錄 `.env.example` 的 `JWT_SECRET` 若太短（例如 `node2026percy`），Spring 這邊必須換成 32 字元以上的字串。
+
+### 產生 `JWT_SECRET`
+
+`JWT_SECRET` **必填、沒有預設值**（2026-10-10 起）。`application.properties` 原本有一個寫在版控裡的預設密鑰，沒有 `.env` 時會直接拿它簽 token；看得到 repo 的人都能用同一把密鑰簽出任何使用者的 JWT，所以拿掉了。現在留空或少於 32 個位元組，啟動都會失敗並在錯誤訊息裡說明原因。
+
+**產生**（擇一，輸出是一行 64 個字元的十六進位字串）：
+
+```bash
+openssl rand -hex 32
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+三個指令都是向作業系統要 32 個位元組（256 bit）的亂數，剛好是 HS256 需要的強度。不要自己打一串字、也不要用線上產生器：前者亂度不夠，後者等於把密鑰交給別人。
+
+**設定**：把輸出貼到 `livefit/.env`，等號後面直接接值，不加引號：
+
+```properties
+JWT_SECRET=這裡貼上剛剛產生的 64 個字元
+```
+
+也可以一行完成（`.env` 裡已經有 `JWT_SECRET=` 這一行時）：
+
+```bash
+cd livefit && sed -i '' "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env   # macOS
+cd livefit && sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env      # Linux
+```
+
+容器或正式環境不放 `.env`，改用作業系統環境變數 `JWT_SECRET`（優先權高於 `.env`）。
+
+**確認**：`cd livefit && mvn spring-boot:run` 能正常啟動就代表有讀到。看到 `尚未設定 JWT_SECRET` 是沒讀到（最常見的原因是不在 `livefit/` 下執行，或 `.env` 檔名打錯）；看到 `至少需要 32 個位元組` 是值太短。
+
+要注意的事：
+
+- **選十六進位是因為它只有 `0-9a-f`**，在 Java properties、dotenv、shell、YAML 裡都不需要跳脫。`openssl rand -base64 48` 也可以，但輸出會有 `+ / =`，放進某些格式要加引號。
+- **程式是把這個字串的 UTF-8 位元組直接當金鑰**（`JwtTokenProvider.init`），不會先做十六進位或 base64 解碼。所以 64 個字元就是 64 個位元組的金鑰，長度檢查看的也是這個數字。
+- **換密鑰會讓所有已簽發的 token 立刻失效**，使用者要重新登入。這也是懷疑密鑰外洩時的處理方式：換一把新的、重啟。
+- **每個環境各用一把**，本機、測試、正式不要共用；也不要與 Node 版的 `backend/.env` 共用（兩邊的 token 本來就不互通）。
+- **不要進版控、不要貼到聊天或 issue**。`livefit/.env` 已在 `.gitignore`；`.env.example` 的 `JWT_SECRET` 要保持空白。
 
 保留 `server.port=8085`。注意 Swagger UI（`docs/openapi.yaml` 的 server 寫死 `http://localhost:8080`）與前端 `VITE_API_BASE_URL` 都指向 8080，要打這支後端需手動改 base URL。
 
