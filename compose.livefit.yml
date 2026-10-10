@@ -2,12 +2,15 @@
 # 與根目錄的 docker-compose.yml 各自獨立：project name、volume 都不同，但佔用相同的 port，不能同時啟動。
 #
 # 變數插值讀 livefit/.env，所以每個指令都要帶 --env-file：
-#   開發期（livefit 在本機用 mvn spring-boot:run 跑）
-#     docker compose -f compose.livefit.yml --env-file livefit/.env up -d
-#   整套（livefit 也用容器跑）
-#     docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
+#   整套（含 livefit 後端）
+#     docker compose -f compose.livefit.yml --env-file livefit/.env up -d --build
+#   開發期（livefit 在本機用 mvn spring-boot:run 跑）：只起其他三個服務
+#     docker compose -f compose.livefit.yml --env-file livefit/.env up -d postgres frontend swagger
 #   清空重來
-#     docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+#     docker compose -f compose.livefit.yml --env-file livefit/.env down -v
+#
+# 刻意不用 profiles 把 livefit 設成選用：Docker Desktop 的啟動按鈕不會帶 --profile，
+# 被 profile 擋住的服務會被跳過，從介面上怎麼按都起不來。
 
 # 不取名 livefit：容易與其他專案的 compose project 撞名，共用到別人的 pgData volume
 name: livefit-final
@@ -57,9 +60,8 @@ services:
       timeout: 3s
       retries: 3
 
-  # Spring Boot 後端：放在 app profile，預設不啟動（開發期在本機跑）
+  # Spring Boot 後端（開發期要在本機跑時，啟動指令只列其他三個服務，或單獨停掉這個容器）
   livefit:
-    profiles: ["app"]
     build:
       context: ./livefit
       dockerfile: Dockerfile

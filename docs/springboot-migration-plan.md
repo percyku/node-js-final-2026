@@ -706,7 +706,7 @@ COMMIT;
 |---|---|
 | 另開 `compose.livefit.yml`，不改根目錄的 `docker-compose.yml` | 原檔的 `backend` 服務是 `main` 上 GitHub Actions 驗收的對象，`npm run db:reset` 也依賴它 |
 | project name `livefit-final`，自己的 `pgData` volume，`POSTGRES_DB=livefit` | 資料庫自動建立，不必再手動 `CREATE DATABASE`；與 Node 版的 `fitness` 徹底分開 |
-| `livefit` 服務放在 `app` profile，預設不啟動 | 後端還在開發：平常在本機 `mvn spring-boot:run`，要整套驗證時才加 `--profile app` |
+| `livefit` 是一般服務，不用 `profiles` 設成選用 | 後端還在開發時，用 `up -d postgres frontend swagger` 只起其他三個服務、後端在本機跑即可。原本放在 `app` profile，見 12.4 |
 | 前端的三個 `VITE_*` build arg 取 `livefit/.env` 的 `GOOGLE_CLIENT_ID`、`GITHUB_CLIENT_ID`、`FACEBOOK_APP_ID` | 這三個值前後端本來就必須相同，只填一處 |
 | 密鑰用 `env_file: ./livefit/.env` 帶入，不寫進 compose | compose 檔進版控，`.env` 不進 |
 
@@ -714,7 +714,7 @@ project name 沒有取 `livefit`：本機已有同名的 compose project（另�
 
 ### 12.2 檔案
 
-- `compose.livefit.yml`：`frontend`、`swagger`、`postgres` 與 `livefit`（`app` profile）。`livefit` 的 `environment` 覆蓋 `PORT=8080`、`DB_HOST=postgres`、`DB_PORT=5432`、`DB_DATABASE=livefit`，優先權高於 `env_file`，所以 `livefit/.env` 維持本機開發用的值即可。
+- `compose.livefit.yml`：`frontend`、`swagger`、`postgres` 與 `livefit`。`livefit` 的 `environment` 覆蓋 `PORT=8080`、`DB_HOST=postgres`、`DB_PORT=5432`、`DB_DATABASE=livefit`，優先權高於 `env_file`，所以 `livefit/.env` 維持本機開發用的值即可。
 - `livefit/Dockerfile`：多階段。build 用 `maven:3.9-eclipse-temurin-21`（wrapper jar 沒進版控，不用 `./mvnw`），先複製 `pom.xml` 下載相依套件再複製 `src`；`-DskipTests`，因為測試要連資料庫。runtime 用 `eclipse-temurin:21-jre-alpine`，以非 root 使用者執行。
 - `livefit/.dockerignore`：排除 `target/`、`.env` 等。容器內沒有 `.env` 檔，`spring.config.import=optional:file:.env[.properties]` 允許缺檔，設定全由環境變數帶入。
 
@@ -725,6 +725,14 @@ project name 沒有取 `livefit`：本機已有同名的 compose project（另�
 - 整套模式：`livefit` 容器變成 `healthy`，`GET /healthcheck` 回 `OK`，Hibernate 在空的 `livefit` 資料庫建出 9 張表。
 - 根目錄 68 項合約測試對容器版 `livefit`（port 8080）全數通過。
 - 前端容器的 bundle 內找得到三個平台的 client id。
-- `down -v` 後不帶 profile 重新 `up`：只啟動 `frontend`、`swagger`、`postgres`，`livefit` 資料庫自動建立。
+- `down -v` 後以 `up -d postgres frontend swagger` 重新啟動：只啟動 `frontend`、`swagger`、`postgres`，`livefit` 資料庫自動建立。
 - 開發模式下在本機執行 `cd livefit && mvn test`，33 項通過。
 - **尚未驗證**：沒有在瀏覽器實際操作 `http://localhost:3000`；GitHub、Facebook 在 3000 的 callback 能否共用同一個 OAuth App 仍未實測（§11.6）；原本的 `docker-compose.yml` 沒有改動，但這次沒有重新啟動 Node 版那一組確認。
+
+### 12.4 拿掉 profile（2026-10-10）
+
+最初 `livefit` 服務設了 `profiles: ["app"]`，預設不啟動。實際使用時發現：在 Docker Desktop 把整組停掉再按啟動，`frontend`、`swagger`、`postgres` 會起來，`livefit` 維持 `Exited`，看起來像後端卡住。
+
+原因是不帶 `--profile app` 時，compose 把被 profile 擋住的服務當成不存在。用 CLI 重現：`docker compose -f compose.livefit.yml --env-file livefit/.env start` 不會啟動 `livefit`，而不讀 compose 檔的 `docker compose -p livefit-final start` 會。後端本身沒有問題，停掉前的 log 顯示啟動正常、healthcheck 回 `OK`。
+
+改成一般服務之後，「預設不啟動」改由指令表達：開發期在 `up -d` 後面列出其他三個服務。

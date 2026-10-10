@@ -74,17 +74,18 @@ cd livefit && mvn test                # 第三方登入的整合測試，需要 
 不含 Node 版後端，project name 是 `livefit-final`，有自己的 `pgData` volume，postgres 直接建立 `livefit` 資料庫。變數插值讀 `livefit/.env`，**每個指令都要帶 `--env-file livefit/.env`**。
 
 ```bash
-# 開發期：只起 postgres、frontend、swagger，livefit 在本機用 mvn spring-boot:run 跑
-docker compose -f compose.livefit.yml --env-file livefit/.env up -d
-# 整套：livefit 也用容器跑（放在 app profile，預設不啟動）
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d --build
+# 整套：livefit 也用容器跑
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d --build
+# 開發期：只起其他三個服務，livefit 在本機用 mvn spring-boot:run 跑
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d postgres frontend swagger
 # 清空重來
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+docker compose -f compose.livefit.yml --env-file livefit/.env down -v
 ```
 
 - 與根目錄 `docker-compose.yml` 佔用相同的 port（3000 / 8081 / 5432 / 8080），**兩組不能同時啟動**，切換前先 `docker compose stop` 另一組。
 - 前端的 `VITE_GOOGLE_CLIENT_ID` 等三個 build arg 直接取 `livefit/.env` 的 `GOOGLE_CLIENT_ID`、`GITHUB_CLIENT_ID`、`FACEBOOK_APP_ID`；改了這些值要加 `--build` 重建前端。
 - `livefit` 容器的密鑰由 `env_file: ./livefit/.env` 帶入，`PORT`、`DB_HOST`、`DB_PORT`、`DB_DATABASE` 由 compose 覆蓋。`livefit/.env` 的值若含 `$` 要寫成 `$$`。
+- **不要用 `profiles` 把 `livefit` 服務設成選用**：Docker Desktop 的啟動按鈕與不帶 `--profile` 的 `docker compose start` 都會跳過它，容器停掉後從介面上起不來（2026-10-10 實際踩到）。開發期不想起後端就在指令列出其他三個服務。
 - project name 不要改成 `livefit`：本機已有同名的 compose project（別的練習專案），會共用到它的 volume。
 
 ### 測試

@@ -19,7 +19,9 @@ Node 版（`backend/`）與根目錄的 `docker-compose.yml` 沒有任何改動�
 
 ### 用法
 
-`livefit` 服務放在 `app` profile。開發期不帶 profile，只起前端、Swagger、資料庫，後端在本機跑；要整套驗證時加 `--profile app --build`。每個指令都要帶 `--env-file livefit/.env`。完整指令在 `README.md` 延伸章節，設計理由在 `docs/springboot-migration-plan.md` §12。
+`up -d` 啟動整套（含後端容器）。開發期改用 `up -d postgres frontend swagger` 只起其他三個服務，後端在本機跑。每個指令都要帶 `--env-file livefit/.env`。
+
+一開始把 `livefit` 服務放在 `app` profile、預設不啟動，但 Docker Desktop 的啟動按鈕不帶 `--profile`，後端容器停掉後從介面上起不來，當天改掉。完整指令在 `README.md` 延伸章節，設計理由在 `docs/springboot-migration-plan.md` §12。
 
 ### 注意
 

@@ -363,25 +363,27 @@ port 由 `livefit/.env` 的 `PORT` 控制（預設 8080）。**與 `backend/` �
 
 #### 啟動
 
-依後端要怎麼跑二選一，差別只在有沒有 `--profile app`：
+依後端要怎麼跑二選一：
 
 ```bash
 # 整套都用容器（含後端），不需要本機的 JDK 與 Maven
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app up -d
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d
 
 # 開發期：只起前端、Swagger、資料庫，後端在本機跑
-docker compose -f compose.livefit.yml --env-file livefit/.env up -d
+docker compose -f compose.livefit.yml --env-file livefit/.env up -d postgres frontend swagger
 cd livefit && mvn spring-boot:run
 ```
 
-`livefit` 服務放在 `app` profile，沒帶 `--profile app` 時不會啟動，這樣開發期改程式不必每次重建 image。
+開發期的指令是直接列出要啟動的服務，沒列到的 `livefit` 就不會啟動，這樣改程式不必每次重建 image。
 
 改了後端程式、或改了 `livefit/.env` 裡第三方登入的 client id 之後，要在啟動指令後面加 `--build` 才會生效。
+
+容器建立過一次之後，也可以直接在 **Docker Desktop** 對 `livefit-final` 這一組按啟動 / 停止，四個服務會一起動作；要改成後端在本機跑時，單獨把 `livefit` 那個容器停掉即可。
 
 #### 確認狀態
 
 ```bash
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app ps
+docker compose -f compose.livefit.yml --env-file livefit/.env ps
 curl http://localhost:8080/healthcheck    # 後端起來會回 OK
 ```
 
@@ -394,20 +396,20 @@ curl http://localhost:8080/healthcheck    # 後端起來會回 OK
 
 #### 關閉
 
-依要關到什麼程度選一個。**一律帶 `--profile app`**，不帶的話後端容器不會被停掉，會繼續佔著 8080。
+依要關到什麼程度選一個：
 
 ```bash
 # 停止容器，保留容器與資料（下次啟動最快）
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app stop
+docker compose -f compose.livefit.yml --env-file livefit/.env stop
 
 # 停止並移除容器，資料庫的資料還在
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down
+docker compose -f compose.livefit.yml --env-file livefit/.env down
 
 # 連資料庫一起清空（帳號等資料全部刪除，無法復原）
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app down -v
+docker compose -f compose.livefit.yml --env-file livefit/.env down -v
 
 # 只關後端容器（例如要改成在本機跑，讓出 8080）
-docker compose -f compose.livefit.yml --env-file livefit/.env --profile app stop livefit
+docker compose -f compose.livefit.yml --env-file livefit/.env stop livefit
 ```
 
 在本機用 `mvn spring-boot:run` 跑的後端不歸 compose 管，在它的終端機按 `Ctrl + C` 關閉。
