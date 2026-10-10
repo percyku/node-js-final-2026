@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 // import { storeToRefs } from "pinia";
 import { useUserStore } from "../stores/user";
-import { getDataFromCookieByKey } from "../utils/cookie.js";
+import { getDataFromCookieByKey, removeCookie } from "../utils/cookie.js";
 import { getUserProfile } from "../api/index.js";
 import { jwtDecode } from "jwt-decode";
 
@@ -152,6 +152,14 @@ async function getProfile(token) {
       role,
     });
   } catch (error) {
+    // token 過期或已被後端作廢（例如帳號的登入方式被重設）：清掉登入狀態，當成未登入繼續導頁。
+    // 不清的話 cookie 會一直留著，每次換頁都在這裡失敗，連登入頁都進不去
+    if (error.response?.status === 401) {
+      removeCookie("token");
+      useUserStore().setCurrentUser({ name: "", role: "" });
+      return;
+    }
+
     let msg = error.message;
 
     if (Object.hasOwn(error.response, "data")) {

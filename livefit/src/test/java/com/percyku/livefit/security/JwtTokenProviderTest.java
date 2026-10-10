@@ -2,6 +2,8 @@ package com.percyku.livefit.security;
 
 import com.percyku.livefit.config.JwtProperties;
 import com.percyku.livefit.entity.User;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -35,12 +37,21 @@ class JwtTokenProviderTest {
         // openssl rand -hex 32 的輸出長度
         JwtTokenProvider provider = providerWith("0123456789abcdef".repeat(4));
         provider.init();
-        UUID userId = UUID.randomUUID();
+        User user = new User();
+        user.setId(UUID.randomUUID());
+        user.setTokenVersion(3);
 
-        String token = provider.createToken(userId, User.ROLE_USER);
+        Claims claims = provider.parse(provider.createToken(user));
 
-        assertThat(provider.parse(token).get("id", String.class)).isEqualTo(userId.toString());
-        assertThat(provider.parse(token).get("role", String.class)).isEqualTo(User.ROLE_USER);
+        assertThat(claims.get("id", String.class)).isEqualTo(user.getId().toString());
+        assertThat(claims.get("role", String.class)).isEqualTo(User.ROLE_USER);
+        assertThat(claims.getExpiration()).isNotNull();
+        assertThat(JwtTokenProvider.tokenVersionOf(claims)).isEqualTo(3);
+    }
+
+    @Test
+    void 沒有ver的舊token視為版本0() {
+        assertThat(JwtTokenProvider.tokenVersionOf(Jwts.claims().add("id", "any").build())).isZero();
     }
 
     private JwtTokenProvider providerWith(String secret) {

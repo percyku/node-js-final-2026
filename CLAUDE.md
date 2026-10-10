@@ -100,7 +100,7 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 - 兩個資料庫的資料不互通，帳號要各自註冊。
 - `ddl-auto=update` 只增不改：新增欄位會自動補上，但改欄位型別、長度、nullable 不會套用到既有的表，需要手動 `ALTER TABLE`。
 
-容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users.password` 可為 null，並多一張 `user_identities` 表記錄第三方登入的綁定（`provider` + `provider_user_id`）。舊的 `users.google_sub` 欄位已從本機資料庫刪除；較早建立的其他環境若還有，照 `docs/springboot-migration-plan.md` §11.7 處理。
+容易踩到的 schema 細節：`course` 是**單數**表名（其他多為複數）、`Course.user_id` 指向 **`User.id` 而非 `Coach.id`**、`credit_purchase.price_paid` 是 `numeric(10,2)` 而 `credit_packages.price` 是 `integer`、`course_booking` 的 `booking_at` 與 `created_at` 兩個都是建立時間。`livefit` 的 `users.password` 可為 null、多了 `email_verified` 與 `token_version` 兩個欄位，並多一張 `user_identities` 表記錄第三方登入的綁定（`provider` + `provider_user_id`）。舊的 `users.google_sub` 欄位已從本機資料庫刪除；較早建立的其他環境若還有，照 `docs/springboot-migration-plan.md` §11.7 處理。
 
 ### 兩套後端的分層差異
 
@@ -125,12 +125,23 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 
 `POST /api/users/google` 收前端 Google Identity Services 給的 ID token（`credential`），由 `security/GoogleIdTokenVerifier` 用 Google 公鑰驗簽後，簽發與一般登入**相同格式**的自家 JWT。後端維持 STATELESS，沒有 redirect / session 流程，也不需要 client secret。
 
-- **各帳號能做什麼只看 `users.password` 是否為 null**，與有沒有綁 Google 無關。先用密碼註冊、之後用同 email 的 Google 登入會自動綁定（只在 `user_identities` 新增一筆，密碼保留），兩種登入與修改密碼都照常可用。純 Google 建立的帳號 `password` 為 null，密碼登入與修改密碼都回 400。**新增任何會讀 `user.getPassword()` 的邏輯時要處理 null**。
+- **能不能用密碼登入只看 `users.password` 是否為 null**，與有沒有綁 Google 無關。純第三方登入建立的帳號、以及被接管過的帳號（見下方「帳號接管」）`password` 為 null：密碼登入回 400，`PUT /api/users/password` 變成不需舊密碼的「設定密碼」。**新增任何會讀 `user.getPassword()` 的邏輯時要處理 null**。
 - 帳號對應邏輯在 `UserService.socialLogin`，各平台共用：驗證完組成 `SocialProfile` 交給它即可。`provider` 用 `UserIdentity.PROVIDER_*` 字串常數，**不要改成 enum**（Hibernate 會建 check 約束，`ddl-auto=update` 不會更新它）。
 - 綁定既有帳號的前提是 Google 回傳 `email_verified=true`，這個檢查不能拿掉，否則能用未驗證的信箱接管別人的帳號。
 - `GOOGLE_CLIENT_ID`（後端）與 `VITE_GOOGLE_CLIENT_ID`（前端）必須是**同一個值**；後端留空時端點回 400 `尚未設定 Google 登入`，前端留空時不顯示 Google 按鈕。
 - 前端的 `VITE_*` 是 **build-time** 變數：本機 `npm run dev` 讀 `frontend/.env`；容器化的前端要靠 `docker-compose.yml` 的 build arg 並重新 build。
 - Google Cloud Console 的 Authorized JavaScript origins 要登記實際開啟頁面的 origin（`http://localhost:5173`、`http://localhost:3000`；`localhost` 與 `127.0.0.1` 視為不同 origin）。
+
+### 帳號接管（僅 `livefit/`）
+
+`users.email_verified` 記錄信箱是否確認過屬於本人：Google、GitHub 建立的帳號為 true，密碼註冊與 Facebook 建立的為 false。Google 或 GitHub 登入以 email 找到 **未驗證** 的帳號時，`UserService.takeOver` 會清掉密碼、刪除既有的所有綁定、`token_version` 加一（舊 JWT 全部失效）、標成已驗證，然後才綁定；找到已驗證的帳號則只新增綁定、密碼保留。設計理由與已知代價在 `docs/springboot-migration-plan.md` §11.8。
+
+- **會修改 `User` 再存回去的程式一律用 `findByIdForUpdate` / `findByEmailForUpdate`**（要在交易內）。Hibernate 是整列寫回，沒鎖的話會把剛被接管清掉的密碼與舊的 `token_version` 寫回去。
+- **登入後的寫入要經過 `UserService.lockCurrentUser`**，它在鎖住該列後再比對一次 `token_version`。filter 的檢查與 service 的寫入不在同一個交易，只靠 filter 擋不住接管當下還在路上的請求。
+- 簽 token 一律用 `JwtTokenProvider.createToken(User)`，payload 的 `ver` 就是 `token_version`。沒有 `ver` 的舊 token 視為 0。
+- 無密碼帳號設定密碼要求這次登入在 5 分鐘內（看 token 的 `iat`），這是取代「驗舊密碼」的把關，不要拿掉。
+- `email_verified` 只能由驗證過的平台登入設成 true。不要在密碼註冊、Facebook 登入、或「這個平台帳號登入過」的快速路徑把它設成 true。
+- 既有資料庫升級要跑 §11.8 的 SQL。
 
 ### GitHub 登入（僅 `livefit/`）
 
@@ -148,7 +159,7 @@ Spring Framework 6（Boot 3）起改用 `PathPatternParser`，**預設不再把 
 `POST /api/users/facebook`，流程與 GitHub 相同，`UserService` 裡兩者共用 `oauthCodeLogin`，只差在 `security/FacebookOAuthClient`（連 Facebook 兩次：換 token、`/me`）。
 
 - **Facebook 不提供 email 是否驗證過的旗標**，`FacebookOAuthClient` 一律回 `emailVerified=false`。結果是：登入過的 Facebook 帳號照常登入、全新的 email 會建立帳號，但 **email 已有帳號時回 409 `此 Email 已註冊，請改用原本的方式登入`，不自動綁定**。不要為了方便把它改成 true，那等於讓人用未驗證的信箱接管帳號。
-- 反方向的接管（先用未驗證信箱建帳號，等本人用 Google/GitHub 登入後被綁進來）是**已知限制**，密碼註冊也有同樣的洞，見 `docs/springboot-migration-plan.md` §11.7。
+- 反方向的接管（先用未驗證信箱建帳號，等本人用 Google/GitHub 登入後被綁進來）由上方「帳號接管」處理：本人登入時 Facebook 的綁定會被刪掉。
 - Facebook 帳號可能沒有 email，這時回 400；`users.email` 不可為 null。
 - 換 token 是 GET、**密鑰在 query string**，不要把完整網址寫進 log。
 - Graph API 版本 `v26.0` 寫在兩處（`FacebookOAuthClient` 與前端 `config/oauthProviders.js`），要一起改。

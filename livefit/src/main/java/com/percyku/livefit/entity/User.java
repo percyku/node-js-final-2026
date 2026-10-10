@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -38,6 +39,20 @@ public class User {
     @Column(name = "role", length = 20, nullable = false)
     private String role = ROLE_USER;
 
+    /**
+     * 這個 email 是否確認過屬於本人：Google、GitHub 建立的帳號為 true，密碼註冊與 Facebook 建立的為 false。
+     * 驗證過的第三方登入遇到 false 的帳號時會接管它並清掉原本的登入方式（見 UserService.takeOver）。
+     * ColumnDefault 是給 ddl-auto=update 替既有資料補值用的，Hibernate 新增時一律明寫欄位值
+     */
+    @ColumnDefault("false")
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
+    /** 寫進 JWT 的 ver；加一就能讓這個帳號已簽發的 token 全部失效 */
+    @ColumnDefault("0")
+    @Column(name = "token_version", nullable = false)
+    private int tokenVersion = 0;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -56,6 +71,10 @@ public class User {
     public void setPassword(String password) { this.password = password; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+    public int getTokenVersion() { return tokenVersion; }
+    public void setTokenVersion(int tokenVersion) { this.tokenVersion = tokenVersion; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 

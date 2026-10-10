@@ -83,7 +83,8 @@ public class AdminCoachService {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
-        User user = userRepository.findById(userId)
+        // 鎖住該列再改：這裡會把整列 users 寫回，不鎖的話可能蓋掉同時發生的帳號接管
+        User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> ApiException.badRequest(ErrorMessages.USER_NOT_FOUND));
         if (user.isCoach()) {
             throw ApiException.conflict(ErrorMessages.ALREADY_COACH);

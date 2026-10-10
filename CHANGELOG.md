@@ -6,6 +6,70 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-10 — 擋住反方向的帳號接管
+
+分支：`fix/social-prehijack`（疊在 `fix/jwt-default-secret` 之上，預計 merge 回 `springboot-backend`）
+
+Node 版（`backend/`）沒有任何改動。`frontend/` 與 `docs/openapi.yaml` 的改動不要 merge 回 `main`。
+
+### 要解決的問題
+
+用沒驗證過的信箱（密碼註冊或 Facebook）先建立帳號，之後信箱本人用 Google 或 GitHub 登入時會被自動綁進那個帳號，而先建帳號的人仍然進得來。10-05 記為已知限制，這次採用當時列的做法 B。設計與理由在 `docs/springboot-migration-plan.md` §11.8。
+
+### 行為差異
+
+| 情況 | 之前 | 現在 |
+|---|---|---|
+| 密碼註冊後，第一次用同 email 的 Google / GitHub 登入 | 綁定，密碼保留 | 綁定，**密碼清除**，之前簽發的 token 失效 |
+| Facebook 建立帳號後，第一次用同 email 的 Google / GitHub 登入 | 綁定，Facebook 仍可登入 | 綁定，**Facebook 的綁定刪除**（再登入回 409），之前簽發的 token 失效 |
+| Google / GitHub 建立帳號後，再用另一個驗證過的平台登入 | 綁定 | 不變 |
+| 沒有密碼的帳號打 `PUT /api/users/password` | 400 `此帳號使用第三方登入，無法修改密碼` | 不需舊密碼直接設定；這次登入超過 5 分鐘回 400 `為了確認是本人操作，請重新登入後再設定密碼` |
+| `GET /api/users/profile` | `data.user` 為 `{ name, email }` | 多一個 `has_password` |
+| JWT payload | `{ id, role, iat, exp }` | 多一個 `ver` |
+| 帶著已失效的 token 開啟前端 | 每次換頁都丟例外 | 清掉登入狀態，當成未登入 |
+
+### 改了什麼
+
+| 檔案 | 內容 |
+|---|---|
+| `entity/User` | 新增 `email_verified`、`token_version` |
+| `repository/UserRepository`、`UserIdentityRepository` | 會鎖住該列的查詢；一句 DELETE 刪除使用者的所有綁定 |
+| `security/JwtTokenProvider`、`JwtAuthenticationFilter`、`AuthUser` | token 帶 `ver` 並在每次請求比對 |
+| `service/UserService` | `takeOver`、`lockCurrentUser`、`setFirstPassword` |
+| `service/AdminCoachService` | 升級教練改為鎖住該列再寫入 |
+| `dto/user/ProfileResponse`、`common/ErrorMessages`、`controller/UserController` | 配合上面的調整 |
+| `frontend/src/pages/user/ProfileView.vue` | 沒有密碼時隱藏舊密碼欄位、改稱「設定密碼」；成功後清空表單並重新取得資料 |
+| `frontend/src/router/index.js` | profile 回 401 時清掉 cookie 與 store |
+| `docs/openapi.yaml` | 更新 `/api/users/profile` 與 `/api/users/password` |
+| `src/test/` | `UserServiceSocialLoginTest` 12 → 18 項；`JwtTokenProviderTest` 3 → 4 項 |
+
+### 升級既有環境
+
+1. 啟動一次，讓 `ddl-auto=update` 補上兩個欄位，用 `\d users` 確認。
+2. 對外服務之前執行 `docs/springboot-migration-plan.md` §11.8「既有資料庫升級」的 SQL。它會把已綁 Google / GitHub 的舊帳號比照接管處理：清密碼、刪 Facebook 綁定、讓舊 token 失效。本機的 `livefit` 已於 2026-10-10 執行。
+
+### 驗證
+
+- `mvn test` 33 項通過，連跑 5 次。新增的情境：密碼帳號與 Facebook 帳號被接管、已驗證帳號再綁平台時密碼保留、舊 token 被 filter 拒絕、無密碼帳號設定密碼（含逾時）、接管前通過驗證的請求不能在接管後設密碼或改名，以及三個併發情境（同帳號同時接管、Google 與 GitHub 同時接管、接管同時改名改密碼升級教練）。
+- 根目錄 68 項合約測試對 Spring Boot 版（port 8085）全數通過。
+- `vite build` 通過。
+- 升級 SQL 在本機 `livefit` 執行：兩個已綁 Google / GitHub 的帳號被標成已驗證、`token_version` 變成 1；當時資料庫裡沒有 Facebook 綁定，這兩個帳號也都沒有密碼，所以沒有東西被清掉。再執行一次影響 0 筆。
+- 用真實帳號在瀏覽器跑了兩輪「先 Facebook、再同 email 的 Google」，以後端 log 與資料庫確認：Facebook 建立帳號 → Google 登入時 log 出現 `已清除原本的登入方式` → 帳號只剩 Google 綁定、`email_verified=true`、`token_version=1` → 再用 Facebook 登入回 409 `此 Email 已註冊，請改用原本的方式登入`。
+
+### 尚未驗證
+
+- 上面那兩輪只核對了後端 log 與資料庫。前端畫面沒有逐項確認：被接管的那個視窗換頁後是否導回登入頁、409 的訊息是否顯示。
+- 瀏覽器上還沒測的流程：設定密碼的畫面、5 分鐘限制、接管密碼註冊的帳號。
+- 升級 SQL「清密碼、刪 Facebook 綁定」那兩個動作沒有實際資料可以驗到。
+- 兩個時間差的修正是用「拿接管前的版本號直接呼叫 service」與併發測試驗證的，沒有做到在兩個交易之間精確插入的測試。
+
+### 注意事項
+
+- 代價與限制（誠實使用者的密碼被清、Facebook 登不回來、帳號裡的資料不清等）列在 §11.8 最後。
+- 密碼註冊仍不驗證信箱，冒用者還是能先佔位，只是本人一登入就收回。
+
+---
+
 ## 2026-10-10 — 移除 JWT 預設密鑰
 
 分支：`fix/jwt-default-secret`（預計 merge 回 `springboot-backend`）
@@ -35,10 +99,11 @@ Node 版（`backend/`）沒有任何改動。
 - 不需要資料庫的 14 項單元測試通過：`JwtTokenProviderTest` 3 項（沒設定、空字串、少於 32 個位元組都拋錯；64 個字元的密鑰可簽發並驗證）、`GithubOAuthClientTest` 6 項、`FacebookOAuthClientTest` 5 項。
 - 文件裡的三個產生指令與 `sed` 一行設定在 macOS 上實測，輸出都是 64 個字元。
 
+- 整合測試、實際啟動與根目錄 68 項合約測試是連同上面的 `fix/social-prehijack` 一起跑的（見該段），都通過；這個分支沒有單獨跑過。
+
 ### 尚未驗證
 
-- `UserServiceSocialLoginTest` 的 12 項整合測試沒有跑成功：當時 postgres 沒有啟動，Spring context 起不來。這 12 項沒有因為這次改動而失敗，是根本沒執行到。postgres 啟動後要補跑 `cd livefit && mvn test`，預期 26 項。
-- 根目錄 68 項合約測試與實際啟動（`mvn spring-boot:run`）同樣還沒跑。
+- 「沒有設定 `JWT_SECRET` 時整個應用程式啟動失敗」只有單元測試驗到 `JwtTokenProvider` 會拋錯，沒有實際拿掉 `.env` 啟動一次。
 
 ---
 

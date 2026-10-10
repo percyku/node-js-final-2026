@@ -65,7 +65,7 @@
                     d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
                   />
                 </svg>
-                <span>修改密碼</span>
+                <span>{{ hasPassword ? "修改密碼" : "設定密碼" }}</span>
               </div>
             </button>
           </nav>
@@ -119,7 +119,12 @@
           </div>
 
           <div v-show="activeTab === 'password'" class="space-y-6">
-            <div>
+            <p v-if="!hasPassword" class="text-base text-primary-300">
+              這個帳號目前沒有密碼，設定後就能用 Email
+              與密碼登入。為了確認是本人操作，需要在登入後 5
+              分鐘內完成，逾時請重新登入。
+            </p>
+            <div v-if="hasPassword">
               <label
                 for="password"
                 class="block text-base font-medium text-primary-0 mb-2"
@@ -175,7 +180,7 @@
                 @click="updatePassword"
                 class="px-8 py-3 bg-secondary-800 text-primary-900 font-medium rounded-lg hover:bg-secondary-700 active:bg-secondary-600 shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-secondary-800 focus:ring-offset-2 focus:ring-offset-primary-900 transition-all duration-200"
               >
-                修改密碼
+                {{ hasPassword ? "修改密碼" : "設定密碼" }}
               </button>
             </div>
           </div>
@@ -186,7 +191,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, getCurrentInstance } from "vue";
+import { ref, computed, onMounted, getCurrentInstance } from "vue";
 import { useUserStore } from "../../stores/user.js";
 const { setUserName } = useUserStore();
 import {
@@ -208,6 +213,9 @@ const passwordForm = ref({
   new_password: "",
   confirm_new_password: "",
 });
+// 第三方登入建立的帳號沒有密碼，這時不需要舊密碼。
+// Node 後端的回應沒有 has_password，一律當成有密碼
+const hasPassword = computed(() => profileForm.value.has_password !== false);
 
 async function updateProfile() {
   try {
@@ -237,9 +245,19 @@ async function updateProfile() {
 
 async function updatePassword() {
   try {
-    const { status } = await putUserPassword(passwordForm.value);
+    const { password, ...newPasswords } = passwordForm.value;
+    const { status } = await putUserPassword(
+      hasPassword.value ? { password, ...newPasswords } : newPasswords
+    );
     if (status === "success") {
-      swalHandler(proxy.$swal, "密碼已更新");
+      swalHandler(proxy.$swal, hasPassword.value ? "密碼已更新" : "密碼已設定");
+      passwordForm.value = {
+        password: "",
+        new_password: "",
+        confirm_new_password: "",
+      };
+      // 設定完成後帳號就有密碼了，重新取得才會顯示舊密碼欄位
+      getProfile();
     }
   } catch (error) {
     let msg = error.message;

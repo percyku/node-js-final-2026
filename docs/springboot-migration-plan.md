@@ -453,7 +453,7 @@ M1～M6 與 smoke 全部通過，代表 Spring Boot 版與 Node 版在驗收層�
 ### 11.4 驗證結果
 
 - 根目錄 68 項合約測試對新資料庫 `livefit` 全數通過。
-- `\d users` 確認 `password` 可 null、`google_sub` 有 unique 約束、時間欄位為 `timestamp without time zone`；`fitness.users` 未被更動。
+- `\d users` 確認 `password` 可 null、`google_sub` 有 unique 約束（當時的狀態；這個欄位已在 §11.7 刪除）、時間欄位為 `timestamp without time zone`；`fitness.users` 未被更動。
 - `POST /api/users/google`：空 body → 400 `欄位未填寫正確`；未設定 Client ID → 400 `尚未設定 Google 登入`；偽造簽章或格式錯誤的 token → 400 `Google 登入驗證失敗`。
 - 真實 Google 帳號的登入、綁定流程需要有效的 Client ID，須在瀏覽器手動驗證。
 
@@ -487,7 +487,7 @@ WHERE google_sub IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'GOOGLE');
 ```
 
-`users.google_sub` 欄位**暫時保留**（Entity 已不對映，不影響寫入），這樣 revert 時舊程式碼仍可運作。等 GitHub、Facebook 登入都完成後再 `ALTER TABLE users DROP COLUMN google_sub`。
+`users.google_sub` 欄位**暫時保留**（Entity 已不對映，不影響寫入），這樣 revert 時舊程式碼仍可運作。等 GitHub、Facebook 登入都完成後再 `ALTER TABLE users DROP COLUMN google_sub`（已完成，見 §11.7 最後一段）。
 
 測試：`cd livefit && mvn test`。`UserServiceSocialLoginTest` 把 `GoogleIdTokenVerifier` 換成假的，其餘走真的 `livefit` 資料庫（**需要 postgres 在線**），用隨機 email 並在結束後刪掉自己建的資料。
 
@@ -569,7 +569,7 @@ GitHub 不像 Google 會給前端一張可離線驗簽的 ID token，所以走 a
 
 **這個問題不是 Facebook 登入帶進來的**：一般註冊（`POST /api/users/signup`）同樣不驗證信箱，攻擊者用密碼註冊受害者的信箱也是一樣的結果。要根治得做信箱驗證信，並且只讓「信箱驗證過的帳號」接受自動綁定；這超出這份作業的範圍，所以只記錄、不處理。正式上線的服務不能這樣做。
 
-**狀態：待決定（2026-10-05）。** 這個情況已用真實帳號重現過（先 Facebook 建帳號、再用同 email 的 Google 登入，Google 被綁進 Facebook 建的帳號）。要不要修、用哪一種做法，尚未決定。
+**狀態：已採用做法 B（2026-10-10），實作見 §11.8。** 這個情況曾用真實帳號重現過（先 Facebook 建帳號、再用同 email 的 Google 登入，Google 被綁進 Facebook 建的帳號）。下面三種做法的比較留作紀錄。
 
 三種做法都要先加 `users.email_verified`（Google、GitHub 建立的帳號為 true；密碼註冊與 Facebook 建立的為 false），差別在驗證過的登入遇到未驗證的帳號時怎麼處理：
 
@@ -596,3 +596,98 @@ ALTER TABLE users DROP COLUMN google_sub;
 ```
 
 刪除後就無法 revert 回 §11.5 之前的程式碼（舊版會找不到欄位）。
+
+### 11.8 擋住反方向的帳號接管（`fix/social-prehijack`）
+
+§11.7「已知限制」的修正，採用做法 B：信箱本人第一次用驗證過的平台登入時，把別人可能留在帳號上的登入方式全部清掉。
+
+**規則**
+
+`users` 多一個 `email_verified`：Google、GitHub 建立的帳號為 true，密碼註冊與 Facebook 建立的為 false。Google 或 GitHub 登入以 email 找到既有帳號時：
+
+| 既有帳號 | 結果 |
+|---|---|
+| `email_verified=true` | 與之前相同：只新增一筆綁定，密碼保留 |
+| `email_verified=false` | **接管**（`UserService.takeOver`）：密碼清成 null、刪除帳號既有的所有 `user_identities`、`token_version` 加一、標成已驗證，然後才新增這次的綁定 |
+
+Facebook 登入的規則不變（email 已有帳號回 409，不綁定也不接管）。
+
+| 檔案 | 內容 |
+|---|---|
+| `entity/User` | 新增 `email_verified`（預設 false）、`token_version`（預設 0） |
+| `repository/UserRepository` | `findByEmailForUpdate`、`findByIdForUpdate`（`SELECT ... FOR UPDATE`） |
+| `repository/UserIdentityRepository` | `deleteAllByUserId`（一句 JPQL DELETE） |
+| `security/JwtTokenProvider` | `createToken(User)`，payload 多一個 `ver`；`tokenVersionOf` 讀取，沒有 `ver` 視為 0 |
+| `security/JwtAuthenticationFilter` | `ver` 與 `users.token_version` 不同時回 401 `無效的 token` |
+| `security/AuthUser` | 多帶通過驗證當下的 `token_version` 與 token 的簽發時間 |
+| `UserService` | `takeOver`、`lockCurrentUser`、`setFirstPassword`；`updateName`、`updatePassword` 改收 `AuthUser` |
+| `AdminCoachService.signupCoach` | 改用 `findByIdForUpdate` |
+| `dto/user/ProfileResponse` | `data.user` 多一個 `has_password` |
+| `ErrorMessages` | 移除 `SOCIAL_ACCOUNT_NO_PASSWORD`，新增 `SET_PASSWORD_RELOGIN` |
+
+**為什麼需要鎖與第二次版本檢查**
+
+只做「接管時清掉」不夠，審查時找到兩種讓攻擊者把存取權拿回來的時間差：
+
+- **整列寫回**。Hibernate 的 UPDATE 預設寫回所有欄位。`updateName`、`updatePassword`、`signupCoach` 都是「讀出、改一個欄位、存回去」，如果在接管 commit 之前讀、之後寫，會把舊的密碼與 `token_version` 一起寫回，接管等於沒發生。`signupCoach` 還是免登入的端點。所以這三處與接管交易都用 `FOR UPDATE` 鎖住該列。**之後新增任何會修改 `User` 再存回去的程式，都要用 `findByIdForUpdate` / `findByEmailForUpdate`。**
+- **驗證與寫入不在同一個交易**。`JwtAuthenticationFilter` 檢查 token 時還沒接管、進到 service 時已經接管完，這個請求就會看到一個沒有密碼的帳號，可以直接設定密碼。所以 `lockCurrentUser` 在鎖住該列之後再比對一次 `token_version`，不同就回 401。只加鎖而不做這個檢查反而更糟：攻擊者的請求會剛好排在接管後面。
+
+刪除綁定用一句 JPQL DELETE 而不是逐筆 `remove`：Google 與 GitHub 同時接管同一個帳號時，後到的那個要刪的資料已經不在，逐筆刪會丟 `StaleStateException` 變成 500。
+
+**無密碼帳號設定密碼**
+
+接管會清掉誠實使用者的密碼，所以要有辦法設回來。沿用 `PUT /api/users/password`：帳號有密碼時行為完全不變；沒有密碼時不需要舊密碼（`password` 欄位忽略），只驗 `new_password` 與 `confirm_new_password`。
+
+沒有舊密碼把關，改成**要求這次登入在 5 分鐘內**（看 token 的 `iat`，`UserService.SET_PASSWORD_LOGIN_WINDOW`），否則回 400 `為了確認是本人操作，請重新登入後再設定密碼`。少了這條，偷到 token 的人可以替純第三方登入的帳號設一組密碼，把最多 30 天的存取權變成永久的。
+
+前端：`ProfileView.vue` 依 `has_password` 隱藏舊密碼欄位；`router/index.js` 在 profile 回 401 時清掉 cookie 與 store。後者原本沒有處理，因為 cookie 的到期時間等於 token 的 `exp`，「cookie 還在但 token 無效」幾乎不會發生；有了 `token_version` 之後，被接管帳號的其他裝置都會遇到，不清的話每次換頁都丟例外，連登入頁都進不去。
+
+**既有資料庫升級**
+
+`ddl-auto=update` 會在第一次啟動時補上兩個欄位，既有資料全部是 `email_verified=false`、`token_version=0`。**啟動一次讓欄位建好之後、對外服務之前**，執行下面的 SQL（可重複執行）：
+
+```sql
+BEGIN;
+
+-- 已經綁了 Google 或 GitHub 的帳號，信箱本人確定進得來。
+-- 但升級前的程式不分驗證與否一律綁定，這些帳號上的 Facebook 綁定與密碼可能是別人留下的（§11.7 的攻擊），
+-- 所以比照接管處理，不能只把 email_verified 改成 true
+
+DELETE FROM user_identities i
+WHERE i.provider NOT IN ('GOOGLE', 'GITHUB')
+  AND EXISTS (SELECT 1 FROM user_identities v
+              WHERE v.user_id = i.user_id AND v.provider IN ('GOOGLE', 'GITHUB'));
+
+UPDATE users u
+SET password = NULL, token_version = token_version + 1, email_verified = true
+WHERE u.email_verified = false
+  AND EXISTS (SELECT 1 FROM user_identities v
+              WHERE v.user_id = u.id AND v.provider IN ('GOOGLE', 'GITHUB'));
+
+COMMIT;
+```
+
+受影響的使用者要重新登入；原本有密碼的，登入後到個人資料頁重新設定。只用密碼或只用 Facebook 的帳號不受影響，維持未驗證。
+
+沒執行的話不會壞，但有兩個後果：升級前就被接管過的帳號，攻擊者的登入方式會一直有效（之後都走「這個平台帳號登入過」的路徑，不會再觸發接管）；正常的舊帳號第一次用另一個平台登入時會被當成接管，密碼與原本的綁定被清掉。
+
+啟動後用 `\d users` 確認兩個欄位都是 `not null` 且有 default。`ddl-auto=update` 補欄位失敗時只會寫 log、不會讓啟動失敗。
+
+**已知的代價與限制**
+
+- 用密碼註冊、之後第一次用 Google 或 GitHub 登入的誠實使用者，密碼會被清掉，要重新設定。伺服器分不出註冊的人是不是信箱本人。
+- 用 Facebook 建立帳號、之後用 Google 或 GitHub 登入的誠實使用者，Facebook 之後登不進來（回 409）。專案沒有「登入後再綁定其他平台」的功能。
+- 帳號裡的資料不清：名稱、教練身分與簡介、開的課、購買與報名紀錄都會留給信箱本人，其中可能有冒用者留下的。
+- 被接管帳號的其他裝置會在下一次換頁時被登出。
+- 信箱本人第一次登入與冒用者註冊剛好同時發生時，本人可能收到一次 409 `Email 已被使用`，重試即可。
+- Google 的 `email_verified` 只看旗標，沒有另外檢查 `hd` 或是否為 `@gmail.com`。
+- 密碼註冊仍然不驗證信箱，冒用者還是可以先佔住別人的信箱，只是本人一登入就會收回。要連佔位都擋住得做註冊驗證信（做法 C）。
+
+**驗證**
+
+- `cd livefit && mvn test` 33 項通過，連跑 5 次（`UserServiceSocialLoginTest` 18 項、`JwtTokenProviderTest` 4 項、`GithubOAuthClientTest` 6 項、`FacebookOAuthClientTest` 5 項）。
+- 根目錄 68 項合約測試對 Spring Boot 版（port 8085）全數通過。
+- `vite build` 通過。
+- 升級 SQL 已在本機 `livefit` 執行（2026-10-10）：兩個已綁 Google / GitHub 的帳號被標成已驗證、`token_version` 變成 1，再執行一次影響 0 筆。當時沒有 Facebook 綁定、這兩個帳號也沒有密碼，所以「清密碼、刪 Facebook 綁定」沒有實際資料可以驗到。
+- 用真實帳號在瀏覽器跑了兩輪「先 Facebook、再同 email 的 Google」，以後端 log 與資料庫確認：Google 登入時 log 出現 `已清除原本的登入方式`，帳號只剩 Google 綁定，再用 Facebook 登入回 409。
+- **尚未驗證**：上面兩輪的前端畫面沒有逐項確認（被接管的視窗換頁後是否導回登入頁、409 訊息是否顯示）；設定密碼的畫面、5 分鐘限制、接管密碼註冊的帳號還沒在瀏覽器測。
