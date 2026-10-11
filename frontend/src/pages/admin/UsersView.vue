@@ -3,8 +3,39 @@
     <div class="mb-8">
       <h3 class="text-4xl font-bold text-primary-0">會員角色管理</h3>
       <p class="mt-2 text-lg text-primary-300 leading-relaxed">
-        檢視所有會員，並將一般會員升級為教練
+        檢視與搜尋所有會員、將一般會員升級為教練，並管理管理員帳號
       </p>
+    </div>
+
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <input
+        v-model="keywordInput"
+        type="search"
+        maxlength="100"
+        placeholder="搜尋名稱或 Email"
+        aria-label="搜尋名稱或 Email"
+        class="flex-1 min-w-48 px-4 py-2 border-2 border-primary-600 rounded-lg outline-none focus:border-secondary-800 bg-primary-800 text-primary-0 placeholder-primary-400"
+        @keyup.enter="search"
+      />
+      <button
+        @click="search"
+        class="px-6 py-2 bg-secondary-800 text-primary-900 font-medium rounded-lg hover:opacity-90 transition-colors"
+      >
+        搜尋
+      </button>
+      <button
+        v-if="keyword"
+        @click="clearSearch"
+        class="px-4 py-2 border-2 border-primary-600 text-primary-0 rounded-lg hover:border-primary-400 transition-colors"
+      >
+        清除
+      </button>
+      <button
+        @click="openCreateAdminModal"
+        class="px-6 py-2 border-2 border-secondary-800 text-secondary-800 font-medium rounded-lg hover:bg-secondary-800 hover:text-primary-900 transition-colors sm:ml-auto"
+      >
+        新增管理員
+      </button>
     </div>
 
     <div class="mb-6 flex flex-wrap items-center gap-4 justify-between">
@@ -24,7 +55,10 @@
           </option>
         </select>
       </div>
-      <p class="text-primary-300">共 {{ pagination.total }} 位會員</p>
+      <p class="text-primary-300">
+        <template v-if="keyword">「{{ keyword }}」的搜尋結果：</template>共
+        {{ pagination.total }} 位會員
+      </p>
     </div>
 
     <div
@@ -85,6 +119,16 @@
               >
                 升級為教練
               </button>
+              <button
+                v-else-if="user.role === 'ADMIN' && user.id !== currentUserId"
+                @click="resetPassword(user)"
+                class="px-4 py-2 border-2 border-red-400 text-red-400 font-medium rounded-lg hover:bg-red-400 hover:text-primary-900 transition-colors"
+              >
+                重設密碼
+              </button>
+              <span v-else-if="user.id === currentUserId" class="text-primary-400">
+                目前登入的帳號
+              </span>
               <span v-else class="text-primary-400">—</span>
             </td>
           </tr>
@@ -203,12 +247,107 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="isCreateAdminOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in bg-modal-overlay"
+      @click="closeCreateAdminModal"
+    >
+      <div
+        class="bg-primary-900 rounded-2xl shadow-2xl max-w-xl w-full p-8 relative animate-scale-in max-h-[90vh] overflow-y-auto"
+        @click.stop
+      >
+        <div class="mb-6">
+          <h3 class="text-2xl font-bold text-primary-0">新增管理員</h3>
+          <p class="mt-2 text-sm text-primary-400">
+            管理員只能用 Email 與密碼登入，不能使用 Google、GitHub、Facebook 登入。
+          </p>
+        </div>
+
+        <form class="space-y-6" @submit.prevent="createAdmin">
+          <div>
+            <label
+              for="adminName"
+              class="block text-sm font-semibold text-primary-0 mb-2"
+            >
+              名稱 <span class="text-red-400">*</span>
+            </label>
+            <input
+              id="adminName"
+              v-model="adminForm.name"
+              type="text"
+              maxlength="50"
+              autocomplete="off"
+              class="w-full px-4 py-2 border-2 border-primary-600 bg-primary-800 text-primary-0 rounded-lg outline-none focus:border-secondary-800"
+            />
+          </div>
+
+          <div>
+            <label
+              for="adminEmail"
+              class="block text-sm font-semibold text-primary-0 mb-2"
+            >
+              Email <span class="text-red-400">*</span>
+            </label>
+            <input
+              id="adminEmail"
+              v-model="adminForm.email"
+              type="email"
+              autocomplete="off"
+              class="w-full px-4 py-2 border-2 border-primary-600 bg-primary-800 text-primary-0 rounded-lg outline-none focus:border-secondary-800"
+            />
+          </div>
+
+          <div>
+            <label
+              for="adminPassword"
+              class="block text-sm font-semibold text-primary-0 mb-2"
+            >
+              密碼 <span class="text-red-400">*</span>
+            </label>
+            <input
+              id="adminPassword"
+              v-model="adminForm.password"
+              type="password"
+              autocomplete="new-password"
+              placeholder="英文大小寫加數字，8～16 個字"
+              class="w-full px-4 py-2 border-2 border-primary-600 bg-primary-800 text-primary-0 rounded-lg outline-none focus:border-secondary-800 placeholder:text-primary-400"
+            />
+          </div>
+
+          <div class="flex justify-end gap-4 pt-2">
+            <button
+              type="button"
+              @click="closeCreateAdminModal"
+              :disabled="isSubmitting"
+              class="px-6 py-2 border-2 border-primary-600 text-primary-0 rounded-lg hover:border-primary-400 transition-colors disabled:opacity-40"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              :disabled="isSubmitting"
+              class="px-6 py-2 bg-secondary-800 text-primary-900 font-semibold rounded-lg hover:opacity-90 transition-colors disabled:bg-primary-600 disabled:text-primary-0 disabled:cursor-not-allowed"
+            >
+              建立
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, getCurrentInstance } from "vue";
-import { getAdminUsers, postAdminPromoteUser } from "../../api/index.js";
+import {
+  getAdminUsers,
+  postAdminPromoteUser,
+  postAdminCreateAdmin,
+  postAdminResetPassword,
+} from "../../api/index.js";
+import { jwtDecode } from "jwt-decode";
+import { getDataFromCookieByKey } from "../../utils/cookie.js";
 import { formatLocalDateTime } from "../../utils/formatDateTime.js";
 import swalHandler from "../../utils/swalHandler.js";
 
@@ -224,7 +363,16 @@ const { proxy } = getCurrentInstance();
 const userList = ref([]);
 const pagination = ref({ page: 1, per: PER_PAGE, total: 0, total_pages: 0 });
 const roleFilter = ref("");
+// keywordInput 是輸入框的內容，按下搜尋才會變成實際查詢用的 keyword
+const keywordInput = ref("");
+const keyword = ref("");
 const isLoading = ref(true);
+
+// 自己那一列不顯示重設密碼（後端也會擋）
+const currentUserId = getCurrentUserId();
+
+const isCreateAdminOpen = ref(false);
+const adminForm = ref(defaultAdminForm());
 
 const promoteTarget = ref(null);
 const isSubmitting = ref(false);
@@ -236,6 +384,22 @@ function defaultForm() {
     description: "",
     profile_image_url: "",
   };
+}
+
+function defaultAdminForm() {
+  return {
+    name: "",
+    email: "",
+    password: "",
+  };
+}
+
+function getCurrentUserId() {
+  try {
+    return jwtDecode(getDataFromCookieByKey("token")).id;
+  } catch {
+    return "";
+  }
 }
 
 // 後端回的可預期錯誤（status: failed）直接顯示訊息，回傳 true 代表已處理
@@ -255,6 +419,7 @@ async function getUserList(page = pagination.value.page) {
       page,
       per: PER_PAGE,
       role: roleFilter.value,
+      keyword: keyword.value,
     });
 
     // 升級後這一頁可能空了（例如篩選「一般會員」的最後一頁），退回最後一頁重查
@@ -276,6 +441,17 @@ async function getUserList(page = pagination.value.page) {
 }
 
 function changeFilter() {
+  getUserList(1);
+}
+
+function search() {
+  keyword.value = keywordInput.value.trim();
+  getUserList(1);
+}
+
+function clearSearch() {
+  keywordInput.value = "";
+  keyword.value = "";
   getUserList(1);
 }
 
@@ -329,6 +505,65 @@ async function promoteUser() {
     throw new Error(`[promoteUser] error : ${error.message}`);
   } finally {
     isSubmitting.value = false;
+  }
+}
+
+function openCreateAdminModal() {
+  adminForm.value = defaultAdminForm();
+  isCreateAdminOpen.value = true;
+}
+
+function closeCreateAdminModal() {
+  if (isSubmitting.value) {
+    return;
+  }
+  isCreateAdminOpen.value = false;
+}
+
+async function createAdmin() {
+  isSubmitting.value = true;
+  try {
+    const { status } = await postAdminCreateAdmin(adminForm.value);
+
+    if (status === "success") {
+      isCreateAdminOpen.value = false;
+      swalHandler(proxy.$swal, "管理員建立成功");
+      getUserList(1);
+    }
+  } catch (error) {
+    if (showFailedMessage(error)) {
+      return;
+    }
+    throw new Error(`[createAdmin] error : ${error.message}`);
+  } finally {
+    isSubmitting.value = false;
+  }
+}
+
+async function resetPassword(user) {
+  const { isConfirmed } = await proxy.$swal.fire({
+    title: "重設密碼",
+    text: `確定要把「${user.name}」（${user.email}）的密碼重設為 Admin123 嗎？對方會被登出。`,
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "確定重設",
+    cancelButtonText: "取消",
+  });
+  if (!isConfirmed) {
+    return;
+  }
+
+  try {
+    const { status } = await postAdminResetPassword(user.id);
+
+    if (status === "success") {
+      swalHandler(proxy.$swal, "密碼重設成功");
+    }
+  } catch (error) {
+    if (showFailedMessage(error)) {
+      return;
+    }
+    throw new Error(`[resetPassword] error : ${error.message}`);
   }
 }
 

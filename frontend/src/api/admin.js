@@ -31,13 +31,24 @@ export function postPromoteUserToCoach(id, data) {
   return request.post(`admin/coaches/${id}`, data);
 }
 
-// M7 管理員後台：以下兩支需要 ADMIN 角色
-export function getAdminUsers({ page, per, role }) {
+// M7 管理員後台：以下都需要 ADMIN 角色
+export function getAdminUsers({ page, per, role, keyword }) {
   const params = { page, per };
   if (role) {
     params.role = role;
   }
+  if (keyword) {
+    params.keyword = keyword;
+  }
   return request.get(`admin/users`, { params });
+}
+
+export function postAdminCreateAdmin(data) {
+  return request.post(`admin/users/admins`, data);
+}
+
+export function postAdminResetPassword(id) {
+  return request.post(`admin/users/${id}/reset-password`);
 }
 
 export function postAdminPromoteUser(id, data) {

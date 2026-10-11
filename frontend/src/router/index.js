@@ -98,6 +98,12 @@ const routes = [
         component: () => import("../pages/admin/UsersView.vue"),
         meta: { requiredRole: "ADMIN" },
       },
+      {
+        // 管理員改名稱與密碼：API 與會員相同，直接用會員中心那一頁
+        path: "profile",
+        component: () => import("../pages/user/ProfileView.vue"),
+        meta: { requiredRole: "ADMIN" },
+      },
     ],
   },
   {

@@ -69,6 +69,16 @@ const swalCodes = {
     text: "已將該會員升級為教練，對方重新登入後即可使用教練後台",
     state: "success",
   },
+  管理員建立成功: {
+    title: "成功",
+    text: "已建立管理員帳號，對方可以用這組 Email 與密碼登入",
+    state: "success",
+  },
+  密碼重設成功: {
+    title: "成功",
+    text: "密碼已重設為 Admin123，請對方登入後盡快到「個人資料與密碼」修改",
+    state: "success",
+  },
   圖片載入失敗: {
     title: "錯誤",
     text: "圖片載入失敗，請檢查網址是否正確",

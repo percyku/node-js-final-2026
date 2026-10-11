@@ -31,6 +31,8 @@ import {
   postPromoteUserToCoach,
   getAdminUsers,
   postAdminPromoteUser,
+  postAdminCreateAdmin,
+  postAdminResetPassword,
 } from "./admin.js";
 
 export {
@@ -64,4 +66,6 @@ export {
   postPromoteUserToCoach,
   getAdminUsers,
   postAdminPromoteUser,
+  postAdminCreateAdmin,
+  postAdminResetPassword,
 };

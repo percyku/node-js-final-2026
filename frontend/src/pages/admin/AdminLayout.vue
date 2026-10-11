@@ -59,10 +59,16 @@ const sidebar = computed(() => {
 
   // 只有管理員看得到；路由與後端 API 也各自檢查角色
   if (role.value === "ADMIN") {
-    items.push({
-      title: "會員角色管理",
-      path: "/admin/users",
-    });
+    items.push(
+      {
+        title: "會員角色管理",
+        path: "/admin/users",
+      },
+      {
+        title: "個人資料與密碼",
+        path: "/admin/profile",
+      }
+    );
   }
 
   return items;
