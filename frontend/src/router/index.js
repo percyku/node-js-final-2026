@@ -93,6 +93,11 @@ const routes = [
         path: "promote-trainer",
         component: () => import("../pages/admin/PromoteTrainer.vue"),
       },
+      {
+        path: "users",
+        component: () => import("../pages/admin/UsersView.vue"),
+        meta: { requiredRole: "ADMIN" },
+      },
     ],
   },
   {
@@ -134,6 +139,10 @@ router.beforeEach(async (to, _from, next) => {
       return;
     }
     if (to.meta.requiredRole === "COACH" && role === "USER") {
+      next({ path: "/" });
+      return;
+    }
+    if (to.meta.requiredRole === "ADMIN" && role !== "ADMIN") {
       next({ path: "/" });
       return;
     }

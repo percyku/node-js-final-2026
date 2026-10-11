@@ -29,6 +29,8 @@ import {
   putCourses,
   getMonthlyRevenue,
   postPromoteUserToCoach,
+  getAdminUsers,
+  postAdminPromoteUser,
 } from "./admin.js";
 
 export {
@@ -60,4 +62,6 @@ export {
   putCourses,
   getMonthlyRevenue,
   postPromoteUserToCoach,
+  getAdminUsers,
+  postAdminPromoteUser,
 };

@@ -61,6 +61,13 @@
             教練介面
           </router-link>
           <router-link
+            v-if="role === 'ADMIN'"
+            to="/admin/users"
+            class="bg-secondary-800 hover:bg-secondary-700 text-primary-900 font-medium text-base leading-[150%] px-5 py-3 rounded transition-colors h-12 flex items-center justify-center"
+          >
+            管理介面
+          </router-link>
+          <router-link
             v-if="name"
             to="/"
             @click="logout"
@@ -177,6 +184,16 @@
                 active-class="!font-bold !leading-[120%] !border-secondary-800 !text-primary-0"
               >
                 教練介面
+              </router-link>
+            </li>
+            <li v-if="role === 'ADMIN'">
+              <router-link
+                to="/admin/users"
+                @click="closeMobileMenu"
+                class="inline-block py-2 text-neutral-300 hover:text-primary-0 transition-all font-medium text-base leading-[150%] border-b-2 border-transparent"
+                active-class="!font-bold !leading-[120%] !border-secondary-800 !text-primary-0"
+              >
+                管理介面
               </router-link>
             </li>
             <li v-if="name">

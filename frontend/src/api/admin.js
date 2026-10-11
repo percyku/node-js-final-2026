@@ -30,3 +30,16 @@ export function getMonthlyRevenue(month) {
 export function postPromoteUserToCoach(id, data) {
   return request.post(`admin/coaches/${id}`, data);
 }
+
+// M7 管理員後台：以下兩支需要 ADMIN 角色
+export function getAdminUsers({ page, per, role }) {
+  const params = { page, per };
+  if (role) {
+    params.role = role;
+  }
+  return request.get(`admin/users`, { params });
+}
+
+export function postAdminPromoteUser(id, data) {
+  return request.post(`admin/users/${id}/coach`, data);
+}
