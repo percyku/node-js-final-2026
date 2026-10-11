@@ -224,10 +224,23 @@ public class UserService {
      * 沒驗證過的代表建立它的人不一定是信箱本人，由 takeOver 清掉原本的登入方式後才綁定。
      */
     private User socialLogin(SocialProfile profile) {
-        return userIdentityRepository
+        User user = userIdentityRepository
                 .findByProviderAndProviderUserId(profile.provider(), profile.subject())
                 .map(UserIdentity::getUser)
                 .orElseGet(() -> linkOrCreateSocialUser(profile));
+        // 正常情況下管理員不會有綁定（linkOrCreateSocialUser 會擋），這裡是最後一道
+        rejectAdmin(user);
+        return user;
+    }
+
+    /**
+     * 管理員只能用密碼登入。預設管理員的信箱不保證是自己的（例如 admin@gmail.com），
+     * 不擋的話信箱的主人用 Google 登入就會接管帳號、拿到管理員權限。
+     */
+    private void rejectAdmin(User user) {
+        if (user.isAdmin()) {
+            throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
+        }
     }
 
     private User linkOrCreateSocialUser(SocialProfile profile) {
@@ -244,6 +257,9 @@ public class UserService {
                     created.setRole(User.ROLE_USER);
                     created.setEmailVerified(profile.emailVerified());
                     user = userRepository.save(created);
+                } else if (user.isAdmin()) {
+                    // 要排在綁定與接管之前
+                    throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
                 } else if (!profile.emailVerified()) {
                     // 沒驗證過的 email 不能拿來綁定既有帳號，否則任何人都能用別人的信箱接管帳號
                     throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);

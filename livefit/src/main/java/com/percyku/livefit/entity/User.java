@@ -20,6 +20,8 @@ public class User {
 
     public static final String ROLE_USER = "USER";
     public static final String ROLE_COACH = "COACH";
+    /** 只能由 AdminSeeder 在啟動時建立，沒有任何 API 能把帳號變成 ADMIN */
+    public static final String ROLE_ADMIN = "ADMIN";
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -79,4 +81,5 @@ public class User {
     public Instant getUpdatedAt() { return updatedAt; }
 
     public boolean isCoach() { return ROLE_COACH.equals(role); }
+    public boolean isAdmin() { return ROLE_ADMIN.equals(role); }
 }

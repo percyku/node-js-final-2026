@@ -77,6 +77,29 @@ public class AdminCoachService {
                 || request.experienceYears() <= 0) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
+        return promote(userId, request, false);
+    }
+
+    // ===== M7 管理員把使用者升級為教練（需 ADMIN） =====
+
+    /**
+     * 欄位規則比 M3 寬：年資可以是 0、簡介可以空白，管理頁面的表單預設值能直接送出，
+     * 細節留給教練本人到教練後台補。
+     * 升級後把對方已簽發的 token 作廢：前端靠 token 裡的 role 決定顯示哪個介面，
+     * 不作廢的話對方要等 token 到期才會看到教練後台。
+     */
+    @Transactional
+    public CoachSignupResponse promoteByAdmin(UUID userId, CoachSignupRequest request) {
+        if (request == null
+                || !ValidUtils.isInteger(request.experienceYears())
+                || request.experienceYears() < 0) {
+            throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
+        }
+        return promote(userId, request, true);
+    }
+
+    /** 兩條升級路徑共用：request 的年資與簡介由呼叫端先驗過。必須在交易內呼叫 */
+    private CoachSignupResponse promote(UUID userId, CoachSignupRequest request, boolean revokeTokens) {
         // profile_image_url 可不填，但有填就必須是 https 開頭
         if (ValidUtils.isValidString(request.profileImageUrl())
                 && !ValidUtils.isHttpsUrl(request.profileImageUrl())) {
@@ -89,8 +112,15 @@ public class AdminCoachService {
         if (user.isCoach()) {
             throw ApiException.conflict(ErrorMessages.ALREADY_COACH);
         }
+        // M3 那支不用登入，少了這個檢查任何人都能把管理員改成教練
+        if (!User.ROLE_USER.equals(user.getRole())) {
+            throw ApiException.badRequest(ErrorMessages.ONLY_USER_CAN_BE_PROMOTED);
+        }
 
         user.setRole(User.ROLE_COACH);
+        if (revokeTokens) {
+            user.setTokenVersion(user.getTokenVersion() + 1);
+        }
         User savedUser = userRepository.saveAndFlush(user);
 
         Coach coach = new Coach();

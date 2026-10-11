@@ -2,6 +2,8 @@ package com.percyku.livefit.repository;
 
 import com.percyku.livefit.entity.User;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -13,6 +15,8 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByEmail(String email);
+
+    Page<User> findByRole(String role, Pageable pageable);
 
     // 下面兩個會鎖住該列（SELECT ... FOR UPDATE），必須在交易內呼叫。
     // Hibernate 更新時是整列寫回，「讀出、修改、寫回 users」的地方都要用它們，
