@@ -103,6 +103,28 @@ npx jest test/m5.test.js -t "報名"   # 跑單一測試
 API_BASE_URL=http://localhost:8085 npm run test:m1
 ```
 
+### Postman Collection（僅 `livefit/`）
+
+`postman/` 是針對 Spring Boot 版的端到端測試，涵蓋 M0 ~ M7 與第三方登入的失敗案例（根目錄的 jest 測試沒有 M7）。Node 版不適用。
+
+```bash
+npm run postman:test     # 用 newman 整份執行，需要 postgres 與 livefit 在線
+npm run postman:build    # 重新產生 collection 與 environment
+npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位址
+```
+
+在 Postman 裡：Import `postman/livefit.postman_collection.json` → 在 collection 上按 Run。不需要手動登入或填 token。
+
+- **兩個 JSON 都是 `postman/build-collection.js` 產生的，不要直接改 JSON**，改腳本後跑 `npm run postman:build`。
+- **斷言有兩層**。流程斷言寫在腳本裡，照 livefit 的實際行為檢查狀態碼、訊息與資料；名稱以 `[openapi]` 開頭的是 collection 層級的 script，拿每支回應比對 `docs/openapi.yaml`。
+- **以下情況要重新產生**：改了 `docs/openapi.yaml`（openapi 驗證是從它讀出來的）；改了 `ErrorMessages.java` 的訊息（要同步改腳本開頭的 `MSG`）；新增端點（在腳本對應的資料夾加請求）。
+- **要整份依序執行**，請求之間靠 collection 變數串接 token 與 id，只跑中間某個資料夾會拿到上一輪的舊值。
+- **每跑一輪會在 `livefit` 資料庫留下資料**：6 個帳號（含 1 個管理員）、1 個技能、1 個方案、3 堂課，Email 都是 `pm_*@example.com`。使用者與課程沒有刪除 API，要清空就重建資料庫。
+- M7 用預設管理員登入，帳密是 collection 變數 `adminEmail` / `adminPassword`；改過預設管理員的密碼要跟著改，否則 M7 整段失敗。`livefit.postman_environment.json` 是選用的，用來覆蓋這些值。
+- openapi 的回應 schema 沒有寫 `required`，約三分之一的回應只有範例沒有 schema。腳本因此把文件列出的欄位都當成必須出現，沒有 schema 的從範例推結構。在 openapi 補上 schema 後驗證會自動變嚴。
+- 腳本讀 YAML 用的 `js-yaml` 是 jest 帶進來的間接相依，沒有寫進 `package.json`。
+- 在 sandbox 裡連不到 localhost，檢查連接埠會誤判成後端沒開；執行 `postman:test` 要在 sandbox 外。
+
 ## 架構要點
 
 ### 兩套後端各用各的資料庫
@@ -218,5 +240,5 @@ Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜�
 ## 注意事項
 
 - **`backend/` 的 port 固定 8080，不可更動** —— 前端寫死 `http://127.0.0.1:8080/api/`，Swagger 的 Try it out 與 CI 驗收也都用這個 port。`livefit/` 的 port 由 `.env` 的 `PORT` 控制；兩者若都設 8080 就不能同時啟動
-- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）。這條規則是針對 `main` 上的 Node 作業驗收；Spring Boot 分支為了 Google 登入已改過 `frontend/` 與 `docs/openapi.yaml`，**這些改動不要 merge 回 `main`**
+- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）。這條規則是針對 `main` 上的 Node 作業驗收；Spring Boot 分支為了 Google 登入已改過 `frontend/` 與 `docs/openapi.yaml`，`feature/postman-collection` 起根目錄 `package.json` 也多了 `postman:*` 兩個指令，**這些改動不要 merge 回 `main`**
 - `POST /api/upload` 是 openapi 標明的加分題，不列入驗收，兩套後端都未實作
