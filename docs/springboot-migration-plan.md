@@ -796,8 +796,34 @@ M3 的 `POST /api/admin/coaches/{userId}` 是公開的，任何人都能把別�
 - `AdminLayout.vue` 的側欄項目、`LayoutHeader.vue` 的「管理介面」按鈕只在 role 為 ADMIN 時顯示；`loginHandler.js` 讓管理員登入後直接到 `/admin/users`。
 - `/admin` 底下原有的三個頁面（儀表板、技能管理、教練資格管理）沒有改，仍是登入即可進入。
 
-### 13.5 驗證結果（2026-10-11）
+### 13.5 搜尋、建立管理員、重設管理員密碼
 
-- `cd livefit && mvn test`：48 項通過，其中 `AdminUserApiTest` 15 項是這次新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409）。
+| 端點 | 說明 |
+|---|---|
+| `GET /api/admin/users?keyword=` | 既有的列表多一個選填參數，比對名稱或 Email，部分符合、不分大小寫，可與 `role` 併用 |
+| `POST /api/admin/users/admins` | 建立管理員，body 與規則同註冊 |
+| `POST /api/admin/users/{userId}/reset-password` | 把另一位管理員的密碼重設為 `Admin123`，並作廢他已簽發的 token |
+
+**搜尋**：列表是後端分頁，只在前端過濾的話只搜得到目前這一頁，所以做在後端。`UserRepository.search` / `searchByRole` 用 `lower(...) like :pattern`，pattern 由 `AdminUserService.toLikePattern` 組成，使用者輸入的 `%`、`_`、`\` 會先跳脫。分成兩個查詢方法而不是寫 `:role is null or ...`，是因為 PostgreSQL 推斷不出 null 參數的型別。
+
+**建立管理員**：選擇建立新帳號，不做「把 USER 升級成 ADMIN」。管理員不能用第三方登入（§13.3），把只用 Google 登入、沒有密碼的會員升級成管理員會讓他再也進不來。名稱長度的檢查從 `UserService` 搬到 `ValidUtils.isValidName`，註冊、改名、建立管理員共用。
+
+**重設密碼**：
+
+- 固定密碼寫在 `AdminUserService.RESET_PASSWORD`。重設後到對方改掉之前，知道這組密碼的人都能登入那個管理員帳號，**只適合本機或練習環境**。對外的環境要改成隨機的一次性密碼或信箱驗證。
+- 只能重設管理員。開放到一般會員與教練的話，管理員就能登入任何人的帳號。
+- 不能重設自己：知道目前密碼的人該走 `PUT /api/users/password`。
+- 被重設的人改密碼的入口是管理後台的「個人資料與密碼」（`/admin/profile`），重用會員中心的 `pages/user/ProfileView.vue`。在這之前管理員的選單連不到任何修改密碼的頁面。
+
+**唯一的管理員忘記密碼**：沒有人能登入後台按重設。刪掉那筆帳號後重啟後端，`AdminSeeder` 會用 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 重建（只適用於預設管理員的信箱）：
+
+```bash
+docker compose -f compose.livefit.yml --env-file livefit/.env exec postgres \
+  psql -U student -d livefit -c "DELETE FROM users WHERE email = 'admin@gmail.com' AND role = 'ADMIN'"
+```
+
+### 13.6 驗證結果（2026-10-11）
+
+- `cd livefit && mvn test`：55 項通過，其中 `AdminUserApiTest` 22 項是這個分支新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409、搜尋、建立管理員、重設管理員密碼）。
 - `frontend` 的 `vite build` 通過。
 

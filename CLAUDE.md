@@ -137,15 +137,16 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 
 ### ADMIN 角色與 M7 管理員後台（僅 `livefit/`）
 
-`GET /api/admin/users`（使用者分頁列表）與 `POST /api/admin/users/{userId}/coach`（升級為教練）需要 `ADMIN` 角色。M3 公開的 `POST /api/admin/coaches/{userId}` 暫時保留。設計理由在 `docs/springboot-migration-plan.md` §13。
+需要 `ADMIN` 角色的端點：`GET /api/admin/users`（使用者分頁列表，`keyword` 可搜尋名稱或 Email）、`POST /api/admin/users/{userId}/coach`（升級為教練）、`POST /api/admin/users/admins`（建立管理員）、`POST /api/admin/users/{userId}/reset-password`（重設管理員密碼）。M3 公開的 `POST /api/admin/coaches/{userId}` 暫時保留。設計理由在 `docs/springboot-migration-plan.md` §13。
 
-- **ADMIN 只能由 `config/AdminSeeder` 在啟動時建立**，沒有任何 API 能產生。信箱與密碼來自 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，預設 `admin@gmail.com` / `Admin123`（email 存小寫）。帳號已存在時 seeder 完全不動，所以**改 `.env` 不會更新既有管理員的密碼**。
+- **ADMIN 只有兩個來源**：`config/AdminSeeder` 在啟動時建立的預設管理員，以及既有管理員用 `POST /api/admin/users/admins` 建立的。沒有把既有帳號升級成 ADMIN 的 API，也不要加：管理員不能用第三方登入，沒有密碼的帳號升級後會進不來。預設管理員的信箱與密碼來自 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，預設 `admin@gmail.com` / `Admin123`（email 存小寫）。帳號已存在時 seeder 完全不動，所以**改 `.env` 不會更新既有管理員的密碼**。
 - **權限不足回 403** `需要管理員權限`，與教練端點的 401 不同。`CoachAccessDeniedHandler` 是用路徑前綴 `/api/admin/users` 判斷的，**新增需要 ADMIN 的端點要放在這個前綴底下**，並加進 `SecurityConfig` 的 matcher 清單。
 - **兩條升級路徑都只接受 `role == USER`**（`AdminCoachService.promote`）。這個檢查不能拿掉：M3 那支不用登入，少了它任何人都能把管理員改成教練。
 - M7 的欄位規則比 M3 寬（年資可為 0、簡介可空白），且升級後會把對方的 `token_version` 加一讓他重新登入；M3 升級教練的行為沒有變。
 - 用預設值升級的教練，簡介、照片、技能都是空的，而 `PUT /api/admin/coaches` 這三項必填（年資依 openapi 可為 0）。後端只回 `欄位未填寫正確`，所以 `pages/coach/ProfileView.vue` 在送出前自己檢查並指出缺哪一欄；改這支的驗證規則時兩邊要一起改。
 - **ADMIN 不能用第三方登入**（`UserService.linkOrCreateSocialUser` 回 409）。預設管理員的信箱不保證是自己的、又是 `email_verified=false`，不擋的話信箱主人用 Google 登入就會經由「帳號接管」拿到管理員權限。
-- 前端頁面是 `/admin/users`（`pages/admin/UsersView.vue`），路由 `meta.requiredRole = "ADMIN"`。`/admin` 底下原有的三個頁面仍是登入即可進入。
+- **重設密碼固定設成 `Admin123`**（`AdminUserService.RESET_PASSWORD`）並把對方的 `token_version` 加一。只能對其他管理員用，不能對自己、也**不要開放到 USER / COACH**（那等於管理員能登入任何人的帳號）。固定密碼只適合本機，理由與唯一管理員忘記密碼的處理方式在 §13.5。
+- 前端頁面是 `/admin/users`（`pages/admin/UsersView.vue`）；管理員改自己密碼的入口是 `/admin/profile`，重用會員中心的 `pages/user/ProfileView.vue`。兩個路由都是 `meta.requiredRole = "ADMIN"`。`/admin` 底下原有的三個頁面仍是登入即可進入。
 - 根目錄的黑箱測試沒有 ADMIN 的案例，M7 的測試在 `livefit/src/test/.../service/AdminUserApiTest.java`。
 
 ### 尾斜線必須可比對

@@ -55,7 +55,7 @@ tags:
   - name: M6 月營收（挑戰）
     description: 「⭐ 挑戰級：聚合統計。做完 → 教練營收報表活了。驗證：npm run test:m6」
   - name: M7 管理員後台
-    description: 「僅 Spring Boot 版（livefit/）提供，不列入作業驗收。需要 ADMIN 角色：列出所有使用者、把一般使用者升級為教練。」
+    description: 「僅 Spring Boot 版（livefit/）提供，不列入作業驗收。需要 ADMIN 角色：列出與搜尋使用者、把一般使用者升級為教練、建立管理員、重設管理員密碼。」
   - name: 加分題
     description: 選做，不列入驗收。
 
@@ -2660,18 +2660,19 @@ paths:
     get:
       tags:
         - M7 管理員後台
-      summary: 取得所有使用者的分頁列表（需 ADMIN）
+      summary: 取得所有使用者的分頁列表，可搜尋（需 ADMIN）
       description: |
         管理後台「會員角色管理」頁呼叫。需要登入，且登入者的 role 必須是 `ADMIN`。**僅 Spring Boot 版（livefit/）提供。**
 
         行為備註：
         - 依註冊時間由新到舊排序。
-        - `page`、`per`、`role` 都可以不給：`page` 預設 1、`per` 預設 10（上限 100）、`role` 不給就是全部。
-        - 有給但不合法（不是正整數、`per` 超過 100、`role` 不是三種角色之一）→ 400「欄位未填寫正確」。`role` 不分大小寫。
+        - `page`、`per`、`role`、`keyword` 都可以不給：`page` 預設 1、`per` 預設 10（上限 100）、`role` 不給就是全部、`keyword` 不給就是不搜尋。
+        - 有給但不合法（不是正整數、`per` 超過 100、`role` 不是三種角色之一、`keyword` 超過 100 個字）→ 400「欄位未填寫正確」。`role` 不分大小寫。
+        - `keyword` 比對**名稱或 Email**：部分符合、不分大小寫，前後空白會去掉，可以和 `role` 一起用。`%` 與 `_` 當成一般字元，不是萬用字元。`pagination.total` 是符合條件的筆數。
         - 回傳的使用者**不含**密碼雜湊。
         - 已登入但不是管理員回 **403**「需要管理員權限」（⚠️ 教練後台的權限不足是 401，這裡不一樣）。
 
-        預設管理員：後端啟動時若 `ADMIN_EMAIL` 指定的信箱還沒有帳號，會自動建立一個 role 為 `ADMIN` 的帳號（本機預設 `admin@gmail.com` / `Admin123`，可在 `livefit/.env` 覆蓋）。用 `POST /api/users/login` 登入後把 token 貼到 Authorize 即可試打。管理員只能用密碼登入，不能用第三方登入。
+        其他管理員由 `POST /api/admin/users/admins` 建立。預設管理員：後端啟動時若 `ADMIN_EMAIL` 指定的信箱還沒有帳號，會自動建立一個 role 為 `ADMIN` 的帳號（本機預設 `admin@gmail.com` / `Admin123`，可在 `livefit/.env` 覆蓋）。用 `POST /api/users/login` 登入後把 token 貼到 Authorize 即可試打。管理員只能用密碼登入，不能用第三方登入。
       security:
         - bearerAuth: []
       parameters:
@@ -2704,6 +2705,14 @@ paths:
               - USER
               - COACH
               - ADMIN
+        - name: keyword
+          in: query
+          required: false
+          description: 搜尋名稱或 Email（部分符合、不分大小寫），最多 100 個字；不給或空白就是不搜尋
+          schema:
+            type: string
+            maxLength: 100
+          example: may
       responses:
         "200":
           description: 成功，回傳這一頁的使用者與分頁資訊
@@ -2729,7 +2738,7 @@ paths:
                     total: 2
                     total_pages: 1
         "400":
-          description: page、per 或 role 不合法
+          description: page、per、role 或 keyword 不合法
           content:
             application/json:
               example:
@@ -2883,6 +2892,166 @@ paths:
               example:
                 status: failed
                 message: "使用者已經是教練"
+  /api/admin/users/admins:
+    post:
+      tags:
+        - M7 管理員後台
+      summary: 建立一個新的管理員帳號（需 ADMIN）
+      description: |
+        由現有的管理員建立另一個管理員。需要登入，且登入者的 role 必須是 `ADMIN`。**僅 Spring Boot 版（livefit/）提供。**
+
+        - 欄位與規則跟註冊（`POST /api/users/signup`）完全相同，差別只在建立出來的帳號 role 是 `ADMIN`。
+        - Email 會轉成小寫儲存。
+        - 管理員只能用 Email 與密碼登入：用這個 Email 走 Google、GitHub、Facebook 登入一律回 409。
+        - 沒有「把既有會員升級成管理員」的 API，Email 已經有帳號時回 409。
+        - 已登入但不是管理員回 **403**「需要管理員權限」。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - email
+                - password
+              properties:
+                name:
+                  type: string
+                  maxLength: 50
+                  description: 名稱（不能是空字串，最多 50 個字）
+                email:
+                  type: string
+                  format: email
+                  description: 登入用的 Email，不能與現有帳號重複
+                password:
+                  type: string
+                  description: 密碼，需要包含英文數字大小寫，最短 8 個字，最長 16 個字
+              example:
+                name: "第二位管理員"
+                email: "admin2@example.com"
+                password: "Admin456"
+      responses:
+        "201":
+          description: 建立成功
+          content:
+            application/json:
+              example:
+                status: success
+                data:
+                  user:
+                    id: "5d2c8f1e-7a3b-4c9d-8e6f-1a2b3c4d5e6f"
+                    name: "第二位管理員"
+                    email: "admin2@example.com"
+                    role: "ADMIN"
+                    created_at: "2026-10-11T06:00:00.000Z"
+        "400":
+          description: 欄位缺漏、名稱太長，或密碼不符合規則
+          content:
+            application/json:
+              examples:
+                欄位未填寫正確:
+                  value:
+                    status: failed
+                    message: "欄位未填寫正確"
+                密碼不符合規則:
+                  value:
+                    status: failed
+                    message: "密碼不符合規則，需要包含英文數字大小寫，最短8個字，最長16個字"
+        "401":
+          description: 沒有登入，或 token 過期／無效
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 請先登入
+        "403":
+          description: 已登入，但 role 不是 ADMIN
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 需要管理員權限
+        "409":
+          description: 這個 Email 已經有帳號
+          content:
+            application/json:
+              example:
+                status: failed
+                message: "Email 已被使用"
+  /api/admin/users/{userId}/reset-password:
+    post:
+      tags:
+        - M7 管理員後台
+      summary: 把另一位管理員的密碼重設為 Admin123（需 ADMIN）
+      description: |
+        管理員忘記密碼時，由另一位管理員替他重設。需要登入，且登入者的 role 必須是 `ADMIN`。不需要 body。**僅 Spring Boot 版（livefit/）提供。**
+
+        - 密碼固定重設成 `Admin123`，對方已簽發的 token 同時全部作廢。
+        - 對方用 `Admin123` 登入後，用 `PUT /api/users/password` 改成自己的密碼（前端在管理後台的「個人資料與密碼」）。
+        - **只能重設管理員**：對象是一般使用者或教練回 400。
+        - **不能重設自己**：知道目前密碼請直接用 `PUT /api/users/password`。
+        - 已登入但不是管理員回 **403**「需要管理員權限」。
+
+        ⚠️ **安全性註記**：重設後到對方改掉密碼之前，任何知道 `Admin123` 的人都能登入那個管理員帳號。這個設計只適合本機或練習環境；正式產品會用隨機的一次性密碼或信箱驗證連結。
+
+        只有一位管理員而他忘記密碼時，沒有人能呼叫這支，處理方式見 `docs/springboot-migration-plan.md` §13。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: 要重設密碼的管理員 id（uuid 字串），可從 GET /api/admin/users?role=ADMIN 取得
+          schema:
+            type: string
+            format: uuid
+          example: "5d2c8f1e-7a3b-4c9d-8e6f-1a2b3c4d5e6f"
+      responses:
+        "200":
+          description: 重設成功，data 為 null
+          content:
+            application/json:
+              example:
+                status: success
+                data: null
+        "400":
+          description: |
+            可預期的失敗，依情境回不同訊息：
+            - userId 查不到對應的使用者 →「使用者不存在」
+            - 對象不是管理員 →「只能重設管理員的密碼」
+            - 對象是自己 →「不能重設自己的密碼，請改用修改密碼」
+          content:
+            application/json:
+              examples:
+                使用者不存在:
+                  value:
+                    status: failed
+                    message: "使用者不存在"
+                對象不是管理員:
+                  value:
+                    status: failed
+                    message: "只能重設管理員的密碼"
+                對象是自己:
+                  value:
+                    status: failed
+                    message: "不能重設自己的密碼，請改用修改密碼"
+        "401":
+          description: 沒有登入，或 token 過期／無效
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 請先登入
+        "403":
+          description: 已登入，但 role 不是 ADMIN
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 需要管理員權限
   # ===== g5-public =====
   /api/coaches:
       get:
