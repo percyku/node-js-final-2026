@@ -90,8 +90,21 @@ const routes = [
         component: () => import("../pages/admin/SkillsView.vue"),
       },
       {
+        // 替自己升級成教練的頁面。管理員不能兼任教練（後端會拒絕），不讓他進來
         path: "promote-trainer",
         component: () => import("../pages/admin/PromoteTrainer.vue"),
+        meta: { excludedRole: "ADMIN" },
+      },
+      {
+        path: "users",
+        component: () => import("../pages/admin/UsersView.vue"),
+        meta: { requiredRole: "ADMIN" },
+      },
+      {
+        // 管理員改名稱與密碼：API 與會員相同，直接用會員中心那一頁
+        path: "profile",
+        component: () => import("../pages/user/ProfileView.vue"),
+        meta: { requiredRole: "ADMIN" },
       },
     ],
   },
@@ -133,10 +146,20 @@ router.beforeEach(async (to, _from, next) => {
       next({ path: "/login" });
       return;
     }
-    if (to.meta.requiredRole === "COACH" && role === "USER") {
+    // 只有教練能進，一般會員與管理員都擋
+    if (to.meta.requiredRole === "COACH" && role !== "COACH") {
       next({ path: "/" });
       return;
     }
+    if (to.meta.requiredRole === "ADMIN" && role !== "ADMIN") {
+      next({ path: "/" });
+      return;
+    }
+  }
+
+  if (to.meta.excludedRole && to.meta.excludedRole === role) {
+    next({ path: "/admin/users" });
+    return;
   }
 
   next();

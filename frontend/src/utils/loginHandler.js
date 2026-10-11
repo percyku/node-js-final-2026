@@ -20,5 +20,7 @@ export function handleLoginSuccess(data, router) {
     router.push("/coach/profile");
   } else if (role === "USER") {
     router.push("/user/dashboard");
+  } else if (role === "ADMIN") {
+    router.push("/admin/users");
   }
 }

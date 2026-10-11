@@ -35,20 +35,46 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { computed } from "vue";
+import { storeToRefs } from "pinia";
+import { useUserStore } from "../../stores/user.js";
 
-const sidebar = ref([
-  {
-    title: "數據儀表板",
-    path: "/admin/dashboard",
-  },
-  {
-    title: "教練技能管理",
-    path: "/admin/skills",
-  },
-  {
-    title: "教練資格管理",
-    path: "/admin/promote-trainer",
-  },
-]);
+const { role } = storeToRefs(useUserStore());
+
+const sidebar = computed(() => {
+  const items = [
+    {
+      title: "數據儀表板",
+      path: "/admin/dashboard",
+    },
+    {
+      title: "教練技能管理",
+      path: "/admin/skills",
+    },
+  ];
+
+  if (role.value !== "ADMIN") {
+    // 替自己升級成教練；管理員不能兼任教練，所以不顯示
+    items.push({
+      title: "教練資格管理",
+      path: "/admin/promote-trainer",
+    });
+  }
+
+  // 只有管理員看得到；路由與後端 API 也各自檢查角色
+  if (role.value === "ADMIN") {
+    items.push(
+      {
+        title: "會員角色管理",
+        path: "/admin/users",
+      },
+      {
+        title: "個人資料與密碼",
+        path: "/admin/profile",
+      }
+    );
+  }
+
+  return items;
+});
 </script>

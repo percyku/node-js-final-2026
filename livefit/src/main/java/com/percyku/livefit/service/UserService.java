@@ -63,9 +63,6 @@ public class UserService {
     private final OAuthProperties oAuthProperties;
     private final TransactionTemplate transactionTemplate;
 
-    /** users.name 的欄位長度 */
-    private static final int NAME_MAX_LENGTH = 50;
-
     public UserService(UserRepository userRepository,
                        UserIdentityRepository userIdentityRepository,
                        CreditPurchaseRepository creditPurchaseRepository,
@@ -96,7 +93,7 @@ public class UserService {
      */
     public SignupResponse signup(SignupRequest request) {
         if (request == null
-                || !isValidName(request.name())
+                || !ValidUtils.isValidName(request.name())
                 || !ValidUtils.isValidString(request.email())
                 || !ValidUtils.isValidString(request.password())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
@@ -224,10 +221,23 @@ public class UserService {
      * 沒驗證過的代表建立它的人不一定是信箱本人，由 takeOver 清掉原本的登入方式後才綁定。
      */
     private User socialLogin(SocialProfile profile) {
-        return userIdentityRepository
+        User user = userIdentityRepository
                 .findByProviderAndProviderUserId(profile.provider(), profile.subject())
                 .map(UserIdentity::getUser)
                 .orElseGet(() -> linkOrCreateSocialUser(profile));
+        // 正常情況下管理員不會有綁定（linkOrCreateSocialUser 會擋），這裡是最後一道
+        rejectAdmin(user);
+        return user;
+    }
+
+    /**
+     * 管理員只能用密碼登入。預設管理員的信箱不保證是自己的（例如 admin@gmail.com），
+     * 不擋的話信箱的主人用 Google 登入就會接管帳號、拿到管理員權限。
+     */
+    private void rejectAdmin(User user) {
+        if (user.isAdmin()) {
+            throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
+        }
     }
 
     private User linkOrCreateSocialUser(SocialProfile profile) {
@@ -244,6 +254,9 @@ public class UserService {
                     created.setRole(User.ROLE_USER);
                     created.setEmailVerified(profile.emailVerified());
                     user = userRepository.save(created);
+                } else if (user.isAdmin()) {
+                    // 要排在綁定與接管之前
+                    throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
                 } else if (!profile.emailVerified()) {
                     // 沒驗證過的 email 不能拿來綁定既有帳號，否則任何人都能用別人的信箱接管帳號
                     throw ApiException.conflict(ErrorMessages.SOCIAL_EMAIL_REGISTERED);
@@ -305,13 +318,13 @@ public class UserService {
         String name = ValidUtils.isValidString(socialName)
                 ? socialName.trim()
                 : email.substring(0, email.indexOf('@') > 0 ? email.indexOf('@') : email.length());
-        if (name.length() <= NAME_MAX_LENGTH) {
+        if (name.length() <= ValidUtils.NAME_MAX_LENGTH) {
             return name;
         }
         // 避免把 emoji 等代理對從中間切斷
-        int end = Character.isHighSurrogate(name.charAt(NAME_MAX_LENGTH - 1))
-                ? NAME_MAX_LENGTH - 1
-                : NAME_MAX_LENGTH;
+        int end = Character.isHighSurrogate(name.charAt(ValidUtils.NAME_MAX_LENGTH - 1))
+                ? ValidUtils.NAME_MAX_LENGTH - 1
+                : ValidUtils.NAME_MAX_LENGTH;
         return name.substring(0, end).trim();
     }
 
@@ -321,7 +334,7 @@ public class UserService {
 
     @Transactional
     public UpdateNameResponse updateName(AuthUser authUser, UpdateNameRequest request) {
-        if (request == null || !isValidName(request.name())) {
+        if (request == null || !ValidUtils.isValidName(request.name())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
@@ -422,19 +435,6 @@ public class UserService {
                         .toList();
 
         return new UserCoursesResponse(purchased - used, used, bookings);
-    }
-
-    /**
-     * 名稱必填，且去除前後空白後不能超過 users.name 的長度。
-     * Node 版沒有這條檢查；這裡補上是因為超長會讓資料庫寫入失敗而回 500。
-     */
-    private boolean isValidName(String name) {
-        if (!ValidUtils.isValidString(name)) {
-            return false;
-        }
-        String trimmed = name.trim();
-        // varchar(50) 以字元（code point）計，emoji 等補充字元算一個
-        return trimmed.codePointCount(0, trimmed.length()) <= NAME_MAX_LENGTH;
     }
 
     private String normalizeEmail(String email) {

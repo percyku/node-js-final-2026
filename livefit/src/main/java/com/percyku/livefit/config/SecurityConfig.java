@@ -26,13 +26,15 @@ import java.util.List;
  * 注意兩處順序陷阱：
  * 1. POST /api/admin/coaches/courses 與 POST /api/admin/coaches/{userId} 路徑形狀相同，
  *    前者必須先宣告，否則升級教練那條規則會把建立課程一併放行。
+ *    M7 的 /api/admin/users/** 與 /api/admin/coaches/** 不重疊，沒有這個問題。
  * 2. anyRequest() 用 permitAll，讓未定義的路徑能落到 NoHandlerFoundException 回 404「無此路由」
  *    （與 Node 版逐路由掛中介層的行為一致）。因此所有需要登入的端點都必須在下方明列。
  */
 @Configuration
 @EnableWebSecurity
 @EnableConfigurationProperties({JwtProperties.class, GoogleProperties.class,
-        GithubProperties.class, FacebookProperties.class, OAuthProperties.class})
+        GithubProperties.class, FacebookProperties.class, OAuthProperties.class,
+        AdminProperties.class})
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
@@ -68,6 +70,12 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/admin/coaches/revenue").hasRole("COACH")
                         .requestMatchers(HttpMethod.GET, "/api/admin/coaches").hasRole("COACH")
                         .requestMatchers(HttpMethod.PUT, "/api/admin/coaches").hasRole("COACH")
+
+                        // ===== M7 管理員後台：需 ADMIN（Node 版沒有），權限不足回 403 =====
+                        .requestMatchers(HttpMethod.GET, "/api/admin/users").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/users/admins").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/users/*/coach").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/users/*/reset-password").hasRole("ADMIN")
 
                         // ===== 會員中心：isAuth =====
                         .requestMatchers(HttpMethod.GET, "/api/users/profile").authenticated()

@@ -736,3 +736,106 @@ project name 沒有取 `livefit`：本機已有同名的 compose project（另�
 原因是不帶 `--profile app` 時，compose 把被 profile 擋住的服務當成不存在。用 CLI 重現：`docker compose -f compose.livefit.yml --env-file livefit/.env start` 不會啟動 `livefit`，而不讀 compose 檔的 `docker compose -p livefit-final start` 會。後端本身沒有問題，停掉前的 log 顯示啟動正常、healthcheck 回 `OK`。
 
 改成一般服務之後，「預設不啟動」改由指令表達：開發期在 `up -d` 後面列出其他三個服務。
+
+---
+
+## 13. 管理員角色與 M7 管理員後台（`feature/admin-role`）
+
+M3 的 `POST /api/admin/coaches/{userId}` 是公開的，任何人都能把別人升級成教練。這裡加上 `ADMIN` 角色與兩支需要 ADMIN 才能呼叫的 API，歸類為 M7。M3 那支暫時保留。Node 版沒有這些。
+
+### 13.1 API
+
+| 端點 | 說明 |
+|---|---|
+| `GET /api/admin/users?page=&per=&role=` | 使用者分頁列表，三個參數都可省略（預設第 1 頁、每頁 10 筆、上限 100），由新到舊 |
+| `POST /api/admin/users/{userId}/coach` | 升級為教練，body 與回應格式同 M3 |
+
+規格在 `docs/openapi.yaml` 的 `M7 管理員後台`。
+
+| 與 M3 升級教練的差異 | M3（公開） | M7（需 ADMIN） |
+|---|---|---|
+| `experience_years` | 必須 > 0 | 可以是 0 |
+| `description` | 必填 | 可空白 |
+| 升級後對方的舊 token | 仍有效 | 作廢（`token_version` 加一） |
+
+- M7 放寬欄位是為了讓管理頁面的表單預設值（年資 0、簡介空白）能直接送出。
+- 作廢舊 token 是因為前端靠 token 裡的 role 決定顯示哪個介面，token 效期 30 天；M3 的情境是使用者替自己升級，前端會自己登出，M7 的對象在別的瀏覽器上，只能由後端讓他登出。
+- 兩條路徑共用 `AdminCoachService.promote`，都只接受 `role == USER`。少了這個檢查，公開的 M3 端點能把管理員改成教練。
+- 已登入但不是 ADMIN 回 **403** `需要管理員權限`（`CoachAccessDeniedHandler` 依路徑前綴 `/api/admin/users` 判斷）。教練端點維持 401，那是為了對齊 Node 版。
+
+**用預設值升級的教練要自己補齊資料**：`PUT /api/admin/coaches` 依 openapi 要求簡介、https 開頭的照片網址、至少一項技能，三者都是必填，缺任何一項都只回一句 `欄位未填寫正確`。所以：
+
+- `PUT /api/admin/coaches` 的年資下限由「> 0」改成「>= 0」。openapi 寫的本來就是 `minimum: 0`，Node 版擋掉 0；不改的話管理員填的年資 0 沒辦法原樣存回去。
+- 前端 `pages/coach/ProfileView.vue` 送出前先檢查這四個欄位，指出缺的是哪一欄。同時修掉原本的錯誤：`catch` 裡少解構 `status`，儲存失敗時畫面上沒有任何提示。
+- 系統裡還沒有任何技能時教練無法儲存，要先到 `/admin/skills` 建立技能。
+
+### 13.2 預設管理員
+
+沒有任何 API 能產生 ADMIN。`config/AdminSeeder`（`ApplicationRunner`）在啟動時檢查 `admin.email` 指定的信箱：
+
+- 沒有帳號 → 建立 `role=ADMIN`、`name=系統管理員`、`email_verified=false` 的帳號。
+- 已有帳號 → 完全不動。不覆寫密碼（管理員可能改過），也不把既有的一般帳號升成管理員（只印警告）。
+- `ADMIN_EMAIL` 或 `ADMIN_PASSWORD` 設成空值 → 不建立。
+
+`application.properties` 的預設值是 `admin@gmail.com` / `Admin123`，只適合本機，對外的環境要在 `livefit/.env` 覆蓋。email 會轉成小寫儲存（登入時也是轉小寫再查），所以輸入 `ADMIN@gmail.com` 一樣能登入。
+
+用啟動程式而不是 postgres 的初始化 SQL：資料表是 Hibernate 啟動時才建的，資料庫容器跑 init script 時 `users` 還不存在。這個做法對 `compose.livefit.yml` 與本機 `mvn spring-boot:run` 都有效。
+
+不需要改 schema：`users.role` 是 `varchar(20)`，沒有 check 約束。
+
+### 13.3 管理員不能用第三方登入
+
+預設管理員的信箱不保證是自己的（`admin@gmail.com` 是真實的 Gmail 位址），帳號又是 `email_verified=false`。照 §11.8 的接管規則，信箱的主人用 Google 登入就會接管它並拿到管理員權限。
+
+所以 `UserService.linkOrCreateSocialUser` 以 email 找到 ADMIN 帳號時，在綁定與接管之前就回 409 `此 Email 已註冊，請改用原本的方式登入`；`socialLogin` 對解析出的帳號再檢查一次。管理員只能用密碼登入。
+
+### 13.4 前端
+
+- `pages/admin/UsersView.vue`：「會員角色管理」，路徑 `/admin/users`。列表、角色篩選、分頁；一般會員列有「升級為教練」按鈕，開表單視窗（預設年資 0、簡介與照片網址空白）。
+- `router/index.js`：該路由 `meta.requiredRole = "ADMIN"`，不是管理員導回首頁。
+- `AdminLayout.vue` 的側欄項目、`LayoutHeader.vue` 的「管理介面」按鈕只在 role 為 ADMIN 時顯示；`loginHandler.js` 讓管理員登入後直接到 `/admin/users`。
+- `/admin` 底下原有的三個頁面（儀表板、技能管理、教練資格管理）沒有改，仍是登入即可進入。
+
+### 13.5 搜尋、建立管理員、重設管理員密碼
+
+| 端點 | 說明 |
+|---|---|
+| `GET /api/admin/users?keyword=` | 既有的列表多一個選填參數，比對名稱或 Email，部分符合、不分大小寫，可與 `role` 併用 |
+| `POST /api/admin/users/admins` | 建立管理員，body 與規則同註冊 |
+| `POST /api/admin/users/{userId}/reset-password` | 把另一位管理員的密碼重設為 `Admin123`，並作廢他已簽發的 token |
+
+**搜尋**：列表是後端分頁，只在前端過濾的話只搜得到目前這一頁，所以做在後端。`UserRepository.search` / `searchByRole` 用 `lower(...) like :pattern`，pattern 由 `AdminUserService.toLikePattern` 組成，使用者輸入的 `%`、`_`、`\` 會先跳脫。分成兩個查詢方法而不是寫 `:role is null or ...`，是因為 PostgreSQL 推斷不出 null 參數的型別。
+
+**建立管理員**：選擇建立新帳號，不做「把 USER 升級成 ADMIN」。管理員不能用第三方登入（§13.3），把只用 Google 登入、沒有密碼的會員升級成管理員會讓他再也進不來。名稱長度的檢查從 `UserService` 搬到 `ValidUtils.isValidName`，註冊、改名、建立管理員共用。
+
+**重設密碼**：
+
+- 固定密碼寫在 `AdminUserService.RESET_PASSWORD`。重設後到對方改掉之前，知道這組密碼的人都能登入那個管理員帳號，**只適合本機或練習環境**。對外的環境要改成隨機的一次性密碼或信箱驗證。
+- 只能重設管理員。開放到一般會員與教練的話，管理員就能登入任何人的帳號。
+- 不能重設自己：知道目前密碼的人該走 `PUT /api/users/password`。
+- 被重設的人改密碼的入口是管理後台的「個人資料與密碼」（`/admin/profile`），重用會員中心的 `pages/user/ProfileView.vue`。在這之前管理員的選單連不到任何修改密碼的頁面。
+
+**唯一的管理員忘記密碼**：沒有人能登入後台按重設。刪掉那筆帳號後重啟後端，`AdminSeeder` 會用 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 重建（只適用於預設管理員的信箱）：
+
+```bash
+docker compose -f compose.livefit.yml --env-file livefit/.env exec postgres \
+  psql -U student -d livefit -c "DELETE FROM users WHERE email = 'admin@gmail.com' AND role = 'ADMIN'"
+```
+
+### 13.6 管理員不能兼任教練
+
+一個帳號只有一種角色，管理員與教練互斥。這是刻意的：
+
+- `role` 是單一字串，而且是 JWT 契約的一部分（openapi 規定 payload 含 `role`，前端靠它決定導去哪個介面）。多角色要改資料模型、token 與前端所有判斷角色的地方。
+- 管理員帳號不該成為每天拿來開課、登入的帳號；審核升級的人與被升級的人也不該是同一個帳號。
+- 管理員只能用密碼登入（§13.3），兼任教練的話這位教練就不能用第三方登入。
+
+同一個人需要兩種身分時，用兩個不同 Email 的帳號。
+
+落實的地方：後端兩條升級路徑只接受 `role == USER`（§13.1），管理員打教練後台的 API 回 401。前端的路由守衛讓 `/coach/*` 只有教練能進（原本只擋一般會員）；`/admin/promote-trainer`（替自己升級成教練）對管理員隱藏，直接輸入網址會導到 `/admin/users`。
+
+### 13.7 驗證結果（2026-10-11）
+
+- `cd livefit && mvn test`：55 項通過，其中 `AdminUserApiTest` 22 項是這個分支新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409、搜尋、建立管理員、重設管理員密碼）。
+- `frontend` 的 `vite build` 通過。
+

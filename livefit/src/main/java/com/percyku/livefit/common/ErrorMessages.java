@@ -22,6 +22,7 @@ public final class ErrorMessages {
     public static final String TOKEN_EXPIRED = "Token 已過期";
     public static final String TOKEN_INVALID = "無效的 token";
     public static final String NOT_COACH = "使用者尚未成為教練";
+    public static final String NOT_ADMIN = "需要管理員權限";
     public static final String ROUTE_NOT_FOUND = "無此路由";
     public static final String SERVER_ERROR = "伺服器錯誤";
 
@@ -50,6 +51,9 @@ public final class ErrorMessages {
 
     public static final String USER_NOT_FOUND = "使用者不存在";
     public static final String ALREADY_COACH = "使用者已經是教練";
+    public static final String ONLY_USER_CAN_BE_PROMOTED = "只能升級一般使用者";
+    public static final String ONLY_ADMIN_CAN_BE_RESET = "只能重設管理員的密碼";
+    public static final String CANNOT_RESET_SELF = "不能重設自己的密碼，請改用修改密碼";
     public static final String UPDATE_USER_FAILED = "更新使用者失敗";
     public static final String COACH_NOT_FOUND = "找不到該教練";
     public static final String COURSE_NOT_FOUND = "課程不存在";
