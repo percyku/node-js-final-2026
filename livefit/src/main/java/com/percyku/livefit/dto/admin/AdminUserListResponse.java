@@ -20,6 +20,11 @@ public record AdminUserListResponse(List<UserItem> users, Pagination pagination)
             String email,
             String role,
             @JsonProperty("created_at") Instant createdAt) {
+
+        public static UserItem from(User user) {
+            return new UserItem(user.getId(), user.getName(), user.getEmail(),
+                    user.getRole(), user.getCreatedAt());
+        }
     }
 
     public record Pagination(
@@ -31,8 +36,7 @@ public record AdminUserListResponse(List<UserItem> users, Pagination pagination)
 
     public static AdminUserListResponse of(Page<User> result, int page, int per) {
         List<UserItem> users = result.getContent().stream()
-                .map(user -> new UserItem(user.getId(), user.getName(), user.getEmail(),
-                        user.getRole(), user.getCreatedAt()))
+                .map(UserItem::from)
                 .toList();
         return new AdminUserListResponse(users,
                 new Pagination(page, per, result.getTotalElements(), result.getTotalPages()));

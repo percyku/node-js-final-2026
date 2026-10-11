@@ -63,9 +63,6 @@ public class UserService {
     private final OAuthProperties oAuthProperties;
     private final TransactionTemplate transactionTemplate;
 
-    /** users.name 的欄位長度 */
-    private static final int NAME_MAX_LENGTH = 50;
-
     public UserService(UserRepository userRepository,
                        UserIdentityRepository userIdentityRepository,
                        CreditPurchaseRepository creditPurchaseRepository,
@@ -96,7 +93,7 @@ public class UserService {
      */
     public SignupResponse signup(SignupRequest request) {
         if (request == null
-                || !isValidName(request.name())
+                || !ValidUtils.isValidName(request.name())
                 || !ValidUtils.isValidString(request.email())
                 || !ValidUtils.isValidString(request.password())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
@@ -321,13 +318,13 @@ public class UserService {
         String name = ValidUtils.isValidString(socialName)
                 ? socialName.trim()
                 : email.substring(0, email.indexOf('@') > 0 ? email.indexOf('@') : email.length());
-        if (name.length() <= NAME_MAX_LENGTH) {
+        if (name.length() <= ValidUtils.NAME_MAX_LENGTH) {
             return name;
         }
         // 避免把 emoji 等代理對從中間切斷
-        int end = Character.isHighSurrogate(name.charAt(NAME_MAX_LENGTH - 1))
-                ? NAME_MAX_LENGTH - 1
-                : NAME_MAX_LENGTH;
+        int end = Character.isHighSurrogate(name.charAt(ValidUtils.NAME_MAX_LENGTH - 1))
+                ? ValidUtils.NAME_MAX_LENGTH - 1
+                : ValidUtils.NAME_MAX_LENGTH;
         return name.substring(0, end).trim();
     }
 
@@ -337,7 +334,7 @@ public class UserService {
 
     @Transactional
     public UpdateNameResponse updateName(AuthUser authUser, UpdateNameRequest request) {
-        if (request == null || !isValidName(request.name())) {
+        if (request == null || !ValidUtils.isValidName(request.name())) {
             throw ApiException.badRequest(ErrorMessages.INVALID_FIELDS);
         }
 
@@ -438,19 +435,6 @@ public class UserService {
                         .toList();
 
         return new UserCoursesResponse(purchased - used, used, bookings);
-    }
-
-    /**
-     * 名稱必填，且去除前後空白後不能超過 users.name 的長度。
-     * Node 版沒有這條檢查；這裡補上是因為超長會讓資料庫寫入失敗而回 500。
-     */
-    private boolean isValidName(String name) {
-        if (!ValidUtils.isValidString(name)) {
-            return false;
-        }
-        String trimmed = name.trim();
-        // varchar(50) 以字元（code point）計，emoji 等補充字元算一個
-        return trimmed.codePointCount(0, trimmed.length()) <= NAME_MAX_LENGTH;
     }
 
     private String normalizeEmail(String email) {

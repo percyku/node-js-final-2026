@@ -42,6 +42,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -218,6 +219,196 @@ class AdminUserApiTest {
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.message").value(ErrorMessages.INVALID_FIELDS));
         }
+    }
+
+    // ===== 搜尋 =====
+
+    @Test
+    void 可用名稱或email搜尋_不分大小寫_可與角色併用() throws Exception {
+        String tag = UUID.randomUUID().toString().substring(0, 8);
+        String byName = newUser("搜尋Name" + tag);
+        String other = newUser("不相干的人");
+        String token = adminToken();
+
+        // 名稱：部分符合、大小寫不同
+        mockMvc.perform(get("/api/admin/users").param("keyword", " name" + tag.toUpperCase() + " ")
+                        .with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.users[*].email", contains(byName)))
+                .andExpect(jsonPath("$.data.pagination.total").value(1));
+
+        // email：newUser 產生的 email 含隨機 uuid，取 @ 前面那段
+        mockMvc.perform(get("/api/admin/users").param("keyword", other.split("@")[0].toUpperCase())
+                        .with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.users[*].email", contains(other)));
+
+        mockMvc.perform(get("/api/admin/users").param("keyword", "name" + tag).param("role", "COACH")
+                        .with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.users", hasSize(0)))
+                .andExpect(jsonPath("$.data.pagination.total").value(0));
+
+        // 空白等同沒給
+        mockMvc.perform(get("/api/admin/users").param("keyword", "  ").with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pagination.total").value((int) userRepository.count()));
+    }
+
+    @Test
+    void 搜尋的百分比與底線是一般字元_過長回400() throws Exception {
+        String tag = UUID.randomUUID().toString().substring(0, 8);
+        String literal = newUser("a_b%c" + tag);
+        newUser("aXbYc" + tag);
+        String token = adminToken();
+
+        mockMvc.perform(get("/api/admin/users").param("keyword", "a_b%c" + tag).with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.users[*].email", contains(literal)));
+        // 當成萬用字元的話會把所有人都撈出來
+        mockMvc.perform(get("/api/admin/users").param("keyword", "%" + tag + "_").with(bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.users", hasSize(0)));
+
+        mockMvc.perform(get("/api/admin/users").param("keyword", "x".repeat(101)).with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.INVALID_FIELDS));
+    }
+
+    // ===== 建立管理員 =====
+
+    @Test
+    void 管理員可建立另一位管理員_email存小寫_可登入且不能用第三方登入() throws Exception {
+        String email = "admin-test-" + UUID.randomUUID() + "@example.com";
+        createdEmails.add(email);
+
+        mockMvc.perform(createAdmin("新管理員", email.toUpperCase(), PASSWORD).with(bearer(adminToken())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.user.id").exists())
+                .andExpect(jsonPath("$.data.user.name").value("新管理員"))
+                .andExpect(jsonPath("$.data.user.email").value(email))
+                .andExpect(jsonPath("$.data.user.role").value(User.ROLE_ADMIN))
+                .andExpect(jsonPath("$.data.user.created_at").exists())
+                .andExpect(jsonPath("$.data.user.password").doesNotExist());
+
+        String token = tokenOf(email);
+        assertThat(tokenProvider.parse(token).get("role", String.class)).isEqualTo(User.ROLE_ADMIN);
+        mockMvc.perform(get("/api/admin/users").with(bearer(token)))
+                .andExpect(status().isOk());
+
+        String credential = "credential-" + UUID.randomUUID();
+        when(googleIdTokenVerifier.verify(credential)).thenReturn(new SocialProfile(
+                UserIdentity.PROVIDER_GOOGLE, "sub-" + UUID.randomUUID(), email, true, "信箱主人"));
+        assertThatThrownBy(() -> userService.googleLogin(new GoogleLoginRequest(credential)))
+                .isInstanceOfSatisfying(ApiException.class, ex -> assertThat(ex.getStatus()).isEqualTo(409));
+        assertThat(userRepository.findByEmail(email).orElseThrow().getPassword()).isNotNull();
+    }
+
+    @Test
+    void 建立管理員的欄位規則與註冊相同_email重複回409() throws Exception {
+        String token = adminToken();
+        String taken = newUser("已註冊的會員");
+        String fresh = "admin-test-" + UUID.randomUUID() + "@example.com";
+        createdEmails.add(fresh);
+
+        mockMvc.perform(createAdmin("", fresh, PASSWORD).with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.INVALID_FIELDS));
+        mockMvc.perform(createAdmin("名".repeat(51), fresh, PASSWORD).with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.INVALID_FIELDS));
+        mockMvc.perform(post("/api/admin/users/admins").with(bearer(token)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(createAdmin("弱密碼", fresh, "12345678").with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.PASSWORD_RULE));
+        assertThat(userRepository.findByEmail(fresh)).isEmpty();
+
+        mockMvc.perform(createAdmin("搶別人的信箱", taken.toUpperCase(), PASSWORD).with(bearer(token)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.EMAIL_TAKEN));
+        assertThat(userRepository.findByEmail(taken).orElseThrow().getRole()).isEqualTo(User.ROLE_USER);
+    }
+
+    // ===== 重設管理員密碼 =====
+
+    @Test
+    void 重設管理員密碼_舊密碼與舊token失效_之後可以自己改掉() throws Exception {
+        String email = newAdmin("忘記密碼的管理員");
+        String oldToken = tokenOf(email);
+
+        mockMvc.perform(resetPassword(idOf(email)).with(bearer(adminToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("success"));
+
+        assertThatThrownBy(() -> userService.login(new LoginRequest(email, PASSWORD)))
+                .isInstanceOfSatisfying(ApiException.class,
+                        ex -> assertThat(ex.getMessage()).isEqualTo(ErrorMessages.LOGIN_FAILED));
+        mockMvc.perform(get("/api/admin/users").with(bearer(oldToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.TOKEN_INVALID));
+
+        String newToken = userService.login(
+                new LoginRequest(email, AdminUserService.RESET_PASSWORD)).token();
+        mockMvc.perform(put("/api/users/password").with(bearer(newToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"password": "%s", "new_password": "Cc123456", "confirm_new_password": "Cc123456"}"""
+                                .formatted(AdminUserService.RESET_PASSWORD)))
+                .andExpect(status().isOk());
+        assertThat(userService.login(new LoginRequest(email, "Cc123456")).token()).isNotBlank();
+        assertThat(userRepository.findByEmail(email).orElseThrow().isAdmin()).isTrue();
+    }
+
+    @Test
+    void 重設密碼只能對其他管理員() throws Exception {
+        String token = adminToken();
+        String userEmail = newUser("一般會員");
+        String coachEmail = newUser("教練");
+        mockMvc.perform(promote(idOf(coachEmail), DEFAULT_FORM).with(bearer(token)))
+                .andExpect(status().isCreated());
+
+        for (String email : List.of(userEmail, coachEmail)) {
+            mockMvc.perform(resetPassword(idOf(email)).with(bearer(token)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value(ErrorMessages.ONLY_ADMIN_CAN_BE_RESET));
+            // 密碼沒被動到
+            assertThat(tokenOf(email)).isNotBlank();
+        }
+
+        mockMvc.perform(resetPassword(idOf(ADMIN_EMAIL)).with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.CANNOT_RESET_SELF));
+        mockMvc.perform(get("/api/admin/users").with(bearer(token)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(resetPassword(UUID.randomUUID()).with(bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.USER_NOT_FOUND));
+    }
+
+    @Test
+    void 建立管理員與重設密碼_沒登入回401_一般使用者回403() throws Exception {
+        String target = newAdmin("不該被動到的管理員");
+        String userToken = tokenOf(newUser("一般使用者"));
+        String fresh = "admin-test-" + UUID.randomUUID() + "@example.com";
+        createdEmails.add(fresh);
+
+        mockMvc.perform(createAdmin("匿名", fresh, PASSWORD))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.FIXED_NOT_LOGIN));
+        mockMvc.perform(resetPassword(idOf(target)))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(createAdmin("想當管理員", fresh, PASSWORD).with(bearer(userToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.NOT_ADMIN));
+        mockMvc.perform(resetPassword(idOf(target)).with(bearer(userToken)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value(ErrorMessages.NOT_ADMIN));
+
+        assertThat(userRepository.findByEmail(fresh)).isEmpty();
+        assertThat(tokenOf(target)).isNotBlank();
     }
 
     // ===== 升級教練 =====
@@ -408,6 +599,26 @@ class AdminUserApiTest {
         createdEmails.add(email);
         userService.signup(new SignupRequest(name, email, PASSWORD));
         return email;
+    }
+
+    /** 建立一位密碼是 PASSWORD 的管理員 */
+    private String newAdmin(String name) throws Exception {
+        String email = "admin-test-" + UUID.randomUUID() + "@example.com";
+        createdEmails.add(email);
+        mockMvc.perform(createAdmin(name, email, PASSWORD).with(bearer(adminToken())))
+                .andExpect(status().isCreated());
+        return email;
+    }
+
+    private MockHttpServletRequestBuilder createAdmin(String name, String email, String password) {
+        return post("/api/admin/users/admins")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"name": "%s", "email": "%s", "password": "%s"}""".formatted(name, email, password));
+    }
+
+    private MockHttpServletRequestBuilder resetPassword(UUID userId) {
+        return post("/api/admin/users/{id}/reset-password", userId);
     }
 
     private UUID idOf(String email) {

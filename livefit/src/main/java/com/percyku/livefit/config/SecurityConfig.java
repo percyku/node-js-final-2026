@@ -73,7 +73,9 @@ public class SecurityConfig {
 
                         // ===== M7 管理員後台：需 ADMIN（Node 版沒有），權限不足回 403 =====
                         .requestMatchers(HttpMethod.GET, "/api/admin/users").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/users/admins").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/admin/users/*/coach").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/users/*/reset-password").hasRole("ADMIN")
 
                         // ===== 會員中心：isAuth =====
                         .requestMatchers(HttpMethod.GET, "/api/users/profile").authenticated()

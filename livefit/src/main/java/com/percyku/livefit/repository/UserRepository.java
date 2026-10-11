@@ -16,7 +16,21 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     Optional<User> findByEmail(String email);
 
-    Page<User> findByRole(String role, Pageable pageable);
+    // 管理後台的使用者列表：pattern 是已轉小寫、跳脫過 LIKE 萬用字元的字串，不搜尋時傳 "%"。
+    // 分成兩個方法而不是寫 ":role is null or ..."：PostgreSQL 推斷不出 null 參數的型別
+
+    @Query("""
+            select u from User u
+            where lower(u.name) like :pattern escape '\\' or lower(u.email) like :pattern escape '\\'
+            """)
+    Page<User> search(@Param("pattern") String pattern, Pageable pageable);
+
+    @Query("""
+            select u from User u
+            where u.role = :role
+              and (lower(u.name) like :pattern escape '\\' or lower(u.email) like :pattern escape '\\')
+            """)
+    Page<User> searchByRole(@Param("role") String role, @Param("pattern") String pattern, Pageable pageable);
 
     // 下面兩個會鎖住該列（SELECT ... FOR UPDATE），必須在交易內呼叫。
     // Hibernate 更新時是整列寫回，「讀出、修改、寫回 users」的地方都要用它們，
