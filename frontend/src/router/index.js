@@ -90,8 +90,10 @@ const routes = [
         component: () => import("../pages/admin/SkillsView.vue"),
       },
       {
+        // 替自己升級成教練的頁面。管理員不能兼任教練（後端會拒絕），不讓他進來
         path: "promote-trainer",
         component: () => import("../pages/admin/PromoteTrainer.vue"),
+        meta: { excludedRole: "ADMIN" },
       },
       {
         path: "users",
@@ -144,7 +146,8 @@ router.beforeEach(async (to, _from, next) => {
       next({ path: "/login" });
       return;
     }
-    if (to.meta.requiredRole === "COACH" && role === "USER") {
+    // 只有教練能進，一般會員與管理員都擋
+    if (to.meta.requiredRole === "COACH" && role !== "COACH") {
       next({ path: "/" });
       return;
     }
@@ -152,6 +155,11 @@ router.beforeEach(async (to, _from, next) => {
       next({ path: "/" });
       return;
     }
+  }
+
+  if (to.meta.excludedRole && to.meta.excludedRole === role) {
+    next({ path: "/admin/users" });
+    return;
   }
 
   next();

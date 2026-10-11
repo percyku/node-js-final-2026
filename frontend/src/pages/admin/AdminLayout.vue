@@ -51,11 +51,15 @@ const sidebar = computed(() => {
       title: "教練技能管理",
       path: "/admin/skills",
     },
-    {
+  ];
+
+  if (role.value !== "ADMIN") {
+    // 替自己升級成教練；管理員不能兼任教練，所以不顯示
+    items.push({
       title: "教練資格管理",
       path: "/admin/promote-trainer",
-    },
-  ];
+    });
+  }
 
   // 只有管理員看得到；路由與後端 API 也各自檢查角色
   if (role.value === "ADMIN") {

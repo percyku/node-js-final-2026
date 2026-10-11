@@ -141,6 +141,7 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 
 - **ADMIN 只有兩個來源**：`config/AdminSeeder` 在啟動時建立的預設管理員，以及既有管理員用 `POST /api/admin/users/admins` 建立的。沒有把既有帳號升級成 ADMIN 的 API，也不要加：管理員不能用第三方登入，沒有密碼的帳號升級後會進不來。預設管理員的信箱與密碼來自 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，預設 `admin@gmail.com` / `Admin123`（email 存小寫）。帳號已存在時 seeder 完全不動，所以**改 `.env` 不會更新既有管理員的密碼**。
 - **權限不足回 403** `需要管理員權限`，與教練端點的 401 不同。`CoachAccessDeniedHandler` 是用路徑前綴 `/api/admin/users` 判斷的，**新增需要 ADMIN 的端點要放在這個前綴底下**，並加進 `SecurityConfig` 的 matcher 清單。
+- **管理員不能兼任教練**，一個帳號只有一種角色，這是刻意的（理由在 §13.6）；同一個人需要兩種身分時用兩個不同 Email 的帳號。前端 `/coach/*` 只有教練能進，`/admin/promote-trainer` 對管理員隱藏（路由 `meta.excludedRole`）。
 - **兩條升級路徑都只接受 `role == USER`**（`AdminCoachService.promote`）。這個檢查不能拿掉：M3 那支不用登入，少了它任何人都能把管理員改成教練。
 - M7 的欄位規則比 M3 寬（年資可為 0、簡介可空白），且升級後會把對方的 `token_version` 加一讓他重新登入；M3 升級教練的行為沒有變。
 - 用預設值升級的教練，簡介、照片、技能都是空的，而 `PUT /api/admin/coaches` 這三項必填（年資依 openapi 可為 0）。後端只回 `欄位未填寫正確`，所以 `pages/coach/ProfileView.vue` 在送出前自己檢查並指出缺哪一欄；改這支的驗證規則時兩邊要一起改。

@@ -822,7 +822,19 @@ docker compose -f compose.livefit.yml --env-file livefit/.env exec postgres \
   psql -U student -d livefit -c "DELETE FROM users WHERE email = 'admin@gmail.com' AND role = 'ADMIN'"
 ```
 
-### 13.6 驗證結果（2026-10-11）
+### 13.6 管理員不能兼任教練
+
+一個帳號只有一種角色，管理員與教練互斥。這是刻意的：
+
+- `role` 是單一字串，而且是 JWT 契約的一部分（openapi 規定 payload 含 `role`，前端靠它決定導去哪個介面）。多角色要改資料模型、token 與前端所有判斷角色的地方。
+- 管理員帳號不該成為每天拿來開課、登入的帳號；審核升級的人與被升級的人也不該是同一個帳號。
+- 管理員只能用密碼登入（§13.3），兼任教練的話這位教練就不能用第三方登入。
+
+同一個人需要兩種身分時，用兩個不同 Email 的帳號。
+
+落實的地方：後端兩條升級路徑只接受 `role == USER`（§13.1），管理員打教練後台的 API 回 401。前端的路由守衛讓 `/coach/*` 只有教練能進（原本只擋一般會員）；`/admin/promote-trainer`（替自己升級成教練）對管理員隱藏，直接輸入網址會導到 `/admin/users`。
+
+### 13.7 驗證結果（2026-10-11）
 
 - `cd livefit && mvn test`：55 項通過，其中 `AdminUserApiTest` 22 項是這個分支新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409、搜尋、建立管理員、重設管理員密碼）。
 - `frontend` 的 `vite build` 通過。
