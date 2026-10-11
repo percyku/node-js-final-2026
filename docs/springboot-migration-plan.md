@@ -763,6 +763,12 @@ M3 的 `POST /api/admin/coaches/{userId}` 是公開的，任何人都能把別�
 - 兩條路徑共用 `AdminCoachService.promote`，都只接受 `role == USER`。少了這個檢查，公開的 M3 端點能把管理員改成教練。
 - 已登入但不是 ADMIN 回 **403** `需要管理員權限`（`CoachAccessDeniedHandler` 依路徑前綴 `/api/admin/users` 判斷）。教練端點維持 401，那是為了對齊 Node 版。
 
+**用預設值升級的教練要自己補齊資料**：`PUT /api/admin/coaches` 依 openapi 要求簡介、https 開頭的照片網址、至少一項技能，三者都是必填，缺任何一項都只回一句 `欄位未填寫正確`。所以：
+
+- `PUT /api/admin/coaches` 的年資下限由「> 0」改成「>= 0」。openapi 寫的本來就是 `minimum: 0`，Node 版擋掉 0；不改的話管理員填的年資 0 沒辦法原樣存回去。
+- 前端 `pages/coach/ProfileView.vue` 送出前先檢查這四個欄位，指出缺的是哪一欄。同時修掉原本的錯誤：`catch` 裡少解構 `status`，儲存失敗時畫面上沒有任何提示。
+- 系統裡還沒有任何技能時教練無法儲存，要先到 `/admin/skills` 建立技能。
+
 ### 13.2 預設管理員
 
 沒有任何 API 能產生 ADMIN。`config/AdminSeeder`（`ApplicationRunner`）在啟動時檢查 `admin.email` 指定的信箱：
@@ -792,6 +798,6 @@ M3 的 `POST /api/admin/coaches/{userId}` 是公開的，任何人都能把別�
 
 ### 13.5 驗證結果（2026-10-11）
 
-- `cd livefit && mvn test`：47 項通過，其中 `AdminUserApiTest` 14 項是這次新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409）。
+- `cd livefit && mvn test`：48 項通過，其中 `AdminUserApiTest` 15 項是這次新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409）。
 - `frontend` 的 `vite build` 通過。
 

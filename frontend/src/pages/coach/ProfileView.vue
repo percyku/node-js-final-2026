@@ -209,8 +209,35 @@ function handleImageError() {
   swalHandler(proxy.$swal, "圖片載入失敗，請檢查網址是否正確");
 }
 
+// 後端對這四個欄位只回一句「欄位未填寫正確」，送出前先指出是哪一欄。
+// 由管理員升級的教練，簡介、照片、技能一開始都是空的
+function findInvalidField() {
+  const { profile_image_url, experience_years, description, skill_ids } =
+    profileData.value;
+
+  if (!profile_image_url || !profile_image_url.startsWith("https")) {
+    return "請填寫 https 開頭的教練照片網址";
+  }
+  if (!Number.isInteger(experience_years) || experience_years < 0) {
+    return "教練資歷請填 0 以上的整數";
+  }
+  if (!description || !description.trim()) {
+    return "請填寫教練簡介";
+  }
+  if (!Array.isArray(skill_ids) || skill_ids.length === 0) {
+    return "請至少選擇一項專長";
+  }
+  return "";
+}
+
 // 儲存教練資料
 async function updateCoachProfile() {
+  const invalidMessage = findInvalidField();
+  if (invalidMessage) {
+    swalHandler(proxy.$swal, invalidMessage);
+    return;
+  }
+
   try {
     const { status, data } = await putCoach(profileData.value);
     if (status === "success") {
@@ -221,7 +248,8 @@ async function updateCoachProfile() {
     let msg = error.message;
 
     if (Object.hasOwn(error.response, "data")) {
-      const { message } = error.response.data;
+      // 這裡原本少解構 status，判斷永遠不成立，儲存失敗時畫面上沒有任何提示
+      const { status, message } = error.response.data;
       msg = message;
 
       if (status === "failed") {

@@ -148,7 +148,8 @@ public class AdminCoachService {
                 || !ValidUtils.isValidString(request.description())
                 || !ValidUtils.isHttpsUrl(request.profileImageUrl())
                 || !ValidUtils.isInteger(request.experienceYears())
-                || request.experienceYears() <= 0
+                // 依 openapi 年資下限是 0（Node 版擋掉 0）。管理員升級時可以填 0，這裡要能原樣存回去
+                || request.experienceYears() < 0
                 || request.skillIds() == null
                 || request.skillIds().isEmpty()
                 // Node 版此處誤用 every，應為「任一無效即擋下」

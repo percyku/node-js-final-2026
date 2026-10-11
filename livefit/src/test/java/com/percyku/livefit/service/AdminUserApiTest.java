@@ -7,9 +7,12 @@ import com.percyku.livefit.dto.user.GoogleLoginRequest;
 import com.percyku.livefit.dto.user.LoginRequest;
 import com.percyku.livefit.dto.user.SignupRequest;
 import com.percyku.livefit.entity.Coach;
+import com.percyku.livefit.entity.Skill;
 import com.percyku.livefit.entity.User;
 import com.percyku.livefit.entity.UserIdentity;
 import com.percyku.livefit.repository.CoachRepository;
+import com.percyku.livefit.repository.CoachWithSkillRepository;
+import com.percyku.livefit.repository.SkillRepository;
 import com.percyku.livefit.repository.UserIdentityRepository;
 import com.percyku.livefit.repository.UserRepository;
 import com.percyku.livefit.security.FacebookOAuthClient;
@@ -45,6 +48,7 @@ import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -82,6 +86,10 @@ class AdminUserApiTest {
     private UserIdentityRepository userIdentityRepository;
     @Autowired
     private CoachRepository coachRepository;
+    @Autowired
+    private CoachWithSkillRepository coachWithSkillRepository;
+    @Autowired
+    private SkillRepository skillRepository;
     @Autowired
     private JwtTokenProvider tokenProvider;
     @Autowired
@@ -239,6 +247,42 @@ class AdminUserApiTest {
         // 密碼沒動，重新登入後能用教練後台
         mockMvc.perform(get("/api/admin/coaches").with(bearer(tokenOf(email))))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void 用預設值升級的教練補齊資料後可以儲存_年資維持0也可以() throws Exception {
+        String email = newUser("待補資料的教練");
+        mockMvc.perform(promote(idOf(email), DEFAULT_FORM).with(bearer(adminToken())))
+                .andExpect(status().isCreated());
+        String token = tokenOf(email);
+        Skill skill = new Skill();
+        skill.setName("admin-test-" + UUID.randomUUID().toString().substring(0, 8));
+        UUID skillId = skillRepository.save(skill).getId();
+
+        try {
+            // 簡介、照片、技能在更新時是必填，只補年資以外的三項
+            mockMvc.perform(put("/api/admin/coaches").with(bearer(token))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"experience_years": 0, "description": "", "profile_image_url": "", "skill_ids": []}"""))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value(ErrorMessages.INVALID_FIELDS));
+
+            mockMvc.perform(put("/api/admin/coaches").with(bearer(token))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"experience_years": 0, "description": "新手教練",
+                                     "profile_image_url": "https://example.com/a.png", "skill_ids": ["%s"]}"""
+                                    .formatted(skillId)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.experience_years").value(0))
+                    .andExpect(jsonPath("$.data.description").value("新手教練"));
+        } finally {
+            coachRepository.findByUserId(idOf(email))
+                    .ifPresent(coach -> coachWithSkillRepository.deleteAll(
+                            coachWithSkillRepository.findByCoachId(coach.getId())));
+            skillRepository.deleteById(skillId);
+        }
     }
 
     @Test
