@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `backend/` | Node.js + Express 5 + TypeORM | 正式繳交用，GitHub Actions 驗收的對象 |
 | `livefit/` | Spring Boot 3.5 + Spring Data JPA + Spring Security | `springboot-backend` 分支上的移植版，不列入作業驗收 |
 
-兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub、Facebook 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
+兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/admin-role` 起 Spring Boot 版再多了 **`ADMIN` 角色與 M7 管理員後台**（同文件 §13）。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub、Facebook 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
 
 ## 規格的唯一來源
 
@@ -133,7 +133,19 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 1. **`anyRequest()` 用 `permitAll`**，需登入的端點在 `SecurityConfig` 逐條明列。這是為了讓未定義路徑落到 `NoHandlerFoundException` 回 404 `無此路由`，與 Node 逐路由掛 middleware 的行為一致。**新增需登入的端點時必須同步加進 matcher 清單**，否則會變成公開的。
 2. **matcher 順序有陷阱**：`POST /api/admin/coaches/courses`（建立課程，需教練）與 `POST /api/admin/coaches/{userId}`（升級教練，免登入）路徑形狀相同，前者必須排在前面。Controller 端由 Spring MVC 字面路徑優先解析，不受影響，但 Security 是依序比對。
 
-其他對齊 Node 行為的地方：權限不足回 **401 而非 403**（`使用者尚未成為教練`）；JWT 驗證後仍回 DB 撈 user，**角色以 DB 當下的 `role` 為準**，不信任 token 內的 role。
+其他對齊 Node 行為的地方：教練端點權限不足回 **401 而非 403**（`使用者尚未成為教練`）；JWT 驗證後仍回 DB 撈 user，**角色以 DB 當下的 `role` 為準**，不信任 token 內的 role。
+
+### ADMIN 角色與 M7 管理員後台（僅 `livefit/`）
+
+`GET /api/admin/users`（使用者分頁列表）與 `POST /api/admin/users/{userId}/coach`（升級為教練）需要 `ADMIN` 角色。M3 公開的 `POST /api/admin/coaches/{userId}` 暫時保留。設計理由在 `docs/springboot-migration-plan.md` §13。
+
+- **ADMIN 只能由 `config/AdminSeeder` 在啟動時建立**，沒有任何 API 能產生。信箱與密碼來自 `ADMIN_EMAIL` / `ADMIN_PASSWORD`，預設 `admin@gmail.com` / `Admin123`（email 存小寫）。帳號已存在時 seeder 完全不動，所以**改 `.env` 不會更新既有管理員的密碼**。
+- **權限不足回 403** `需要管理員權限`，與教練端點的 401 不同。`CoachAccessDeniedHandler` 是用路徑前綴 `/api/admin/users` 判斷的，**新增需要 ADMIN 的端點要放在這個前綴底下**，並加進 `SecurityConfig` 的 matcher 清單。
+- **兩條升級路徑都只接受 `role == USER`**（`AdminCoachService.promote`）。這個檢查不能拿掉：M3 那支不用登入，少了它任何人都能把管理員改成教練。
+- M7 的欄位規則比 M3 寬（年資可為 0、簡介可空白），且升級後會把對方的 `token_version` 加一讓他重新登入；M3 的行為沒有變。
+- **ADMIN 不能用第三方登入**（`UserService.linkOrCreateSocialUser` 回 409）。預設管理員的信箱不保證是自己的、又是 `email_verified=false`，不擋的話信箱主人用 Google 登入就會經由「帳號接管」拿到管理員權限。
+- 前端頁面是 `/admin/users`（`pages/admin/UsersView.vue`），路由 `meta.requiredRole = "ADMIN"`。`/admin` 底下原有的三個頁面仍是登入即可進入。
+- 根目錄的黑箱測試沒有 ADMIN 的案例，M7 的測試在 `livefit/src/test/.../service/AdminUserApiTest.java`。
 
 ### 尾斜線必須可比對
 
@@ -198,7 +210,7 @@ Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜�
 | `livefit/.env` | Spring Boot 原生 `spring.config.import=optional:file:.env[.properties]`，範本 `livefit/.env.example` |
 | `frontend/.env` | Vite（僅本機 `npm run dev` / `npm run build`），範本 `frontend/.env.example` |
 
-`livefit/.env` 是 **Java properties 格式**：`KEY=value`，不加引號、不寫 `export`（與根目錄那份給 `dotenv` 用的規則不同）。`JWT_SECRET` **必填且沒有預設值**，留空或少於 32 個位元組時 `JwtTokenProvider` 會在啟動時拋錯；用 `openssl rand -hex 32` 產生（說明在 `docs/springboot-migration-plan.md` §2）。**不要在 `application.properties` 加回預設密鑰**。
+`livefit/.env` 是 **Java properties 格式**：`KEY=value`，不加引號、不寫 `export`（與根目錄那份給 `dotenv` 用的規則不同）。`ADMIN_EMAIL` / `ADMIN_PASSWORD` 選填，不寫時用 `application.properties` 的預設值。`JWT_SECRET` **必填且沒有預設值**，留空或少於 32 個位元組時 `JwtTokenProvider` 會在啟動時拋錯；用 `openssl rand -hex 32` 產生（說明在 `docs/springboot-migration-plan.md` §2）。**不要在 `application.properties` 加回預設密鑰**。
 
 ## 注意事項
 

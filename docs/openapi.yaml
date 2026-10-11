@@ -20,6 +20,7 @@ info:
     - **驗收只看 2xx / 4xx + status 欄位**：文件裡寫的 200/201 是參考值，回 200 或 201 都算對
     - 需要登入的 API 一律收 `Authorization: Bearer <token>`
     - JWT payload 必須含 `{ id, role, exp }`（前端會解開來用，缺了會壞）
+    - `role` 有三種：`USER`、`COACH`、`ADMIN`。`ADMIN` 只有 Spring Boot 版（`livefit/`）有，見 M7
     - 所有 id 都是 uuid 字串
     - 日期時間欄位用 UTC ISO 8601 字串（例 `2026-08-20T10:00:00Z`）
 
@@ -53,6 +54,8 @@ tags:
     description: 「重要：四句固定錯誤訊息文字都在這。做完 → 購買方案、報名課程、我的課表活了。驗證：npm run test:m5」
   - name: M6 月營收（挑戰）
     description: 「⭐ 挑戰級：聚合統計。做完 → 教練營收報表活了。驗證：npm run test:m6」
+  - name: M7 管理員後台
+    description: 「僅 Spring Boot 版（livefit/）提供，不列入作業驗收。需要 ADMIN 角色：列出所有使用者、把一般使用者升級為教練。」
   - name: 加分題
     description: 選做，不列入驗收。
 
@@ -1625,12 +1628,13 @@ paths:
       description: |
         把一般使用者（role 為 USER）升級成教練：建立一筆教練資料，並把該使用者的 role 改成 COACH。升級成功後，這位使用者就能登入使用教練後台的功能。
 
-        ⚠️ **安全性註記（課程簡化）**：這支 API 是 public、**不需要登入**就能呼叫。真實世界的系統絕對不會讓任何人都能把別人升級成教練——正式產品這種端點一定要做身分與權限控管。本課程為了讓大家專注在主流程，刻意簡化，請記得這不是正常設計。
+        ⚠️ **安全性註記（課程簡化）**：這支 API 是 public、**不需要登入**就能呼叫。真實世界的系統絕對不會讓任何人都能把別人升級成教練——正式產品這種端點一定要做身分與權限控管。本課程為了讓大家專注在主流程，刻意簡化，請記得這不是正常設計。有權限控管的做法見 M7 的 `POST /api/admin/users/{userId}/coach`（僅 Spring Boot 版）；這支目前暫時保留。
 
         行為備註：
         - `profile_image_url` 是**選填**：可以整個不給、也可以給空字串，都會過。但只要有給非空的值，就必須以 `https` 開頭，否則回 400「欄位未填寫正確」。
         - ⚠️ 注意：這條規則跟「更新教練資料（PUT /api/admin/coaches）」**不一樣**（那支是必填），對照表請看 PUT 那支的說明。
         - 同一個使用者只能升級一次：已經是教練再打一次會回 409「使用者已經是教練」。
+        - （僅 Spring Boot 版）對象必須是一般使用者：userId 是管理員（role 為 ADMIN）時回 400「只能升級一般使用者」。
         - 文件寫的狀態碼（201/400/409）是答案版實際行為，供參考；**驗收只看「成功 2xx / 失敗 4xx」加上回應的 status 欄位**，不逐碼比對。
       parameters:
         - name: userId
@@ -2651,6 +2655,234 @@ paths:
                   value:
                     status: failed
                     message: 使用者尚未成為教練
+  # ===== g7-admin-user（僅 Spring Boot 版） =====
+  /api/admin/users:
+    get:
+      tags:
+        - M7 管理員後台
+      summary: 取得所有使用者的分頁列表（需 ADMIN）
+      description: |
+        管理後台「會員角色管理」頁呼叫。需要登入，且登入者的 role 必須是 `ADMIN`。**僅 Spring Boot 版（livefit/）提供。**
+
+        行為備註：
+        - 依註冊時間由新到舊排序。
+        - `page`、`per`、`role` 都可以不給：`page` 預設 1、`per` 預設 10（上限 100）、`role` 不給就是全部。
+        - 有給但不合法（不是正整數、`per` 超過 100、`role` 不是三種角色之一）→ 400「欄位未填寫正確」。`role` 不分大小寫。
+        - 回傳的使用者**不含**密碼雜湊。
+        - 已登入但不是管理員回 **403**「需要管理員權限」（⚠️ 教練後台的權限不足是 401，這裡不一樣）。
+
+        預設管理員：後端啟動時若 `ADMIN_EMAIL` 指定的信箱還沒有帳號，會自動建立一個 role 為 `ADMIN` 的帳號（本機預設 `admin@gmail.com` / `Admin123`，可在 `livefit/.env` 覆蓋）。用 `POST /api/users/login` 登入後把 token 貼到 Authorize 即可試打。管理員只能用密碼登入，不能用第三方登入。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 第幾頁，從 1 開始。預設 1
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          example: 1
+        - name: per
+          in: query
+          required: false
+          description: 每頁幾筆，1～100。預設 10
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          example: 10
+        - name: role
+          in: query
+          required: false
+          description: 只列出這個角色的使用者；不給就是全部
+          schema:
+            type: string
+            enum:
+              - USER
+              - COACH
+              - ADMIN
+      responses:
+        "200":
+          description: 成功，回傳這一頁的使用者與分頁資訊
+          content:
+            application/json:
+              example:
+                status: success
+                data:
+                  users:
+                    - id: "f3b7d2c1-8a4e-4c6f-9d2b-5e1a7c3f9b8d"
+                      name: "小美"
+                      email: "may@example.com"
+                      role: "USER"
+                      created_at: "2026-10-11T02:00:00.000Z"
+                    - id: "0b6c1d55-2f0e-4a77-9a55-7f1d9a3b2c10"
+                      name: "系統管理員"
+                      email: "admin@gmail.com"
+                      role: "ADMIN"
+                      created_at: "2026-10-10T08:30:00.000Z"
+                  pagination:
+                    page: 1
+                    per: 10
+                    total: 2
+                    total_pages: 1
+        "400":
+          description: page、per 或 role 不合法
+          content:
+            application/json:
+              example:
+                status: failed
+                message: "欄位未填寫正確"
+        "401":
+          description: 沒有登入，或 token 過期／無效
+          content:
+            application/json:
+              examples:
+                未登入:
+                  summary: 沒帶 token
+                  value:
+                    status: failed
+                    message: 請先登入
+                token無效:
+                  summary: token 無效、已被作廢或查無使用者
+                  value:
+                    status: failed
+                    message: 無效的 token
+        "403":
+          description: 已登入，但 role 不是 ADMIN
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 需要管理員權限
+  /api/admin/users/{userId}/coach:
+    post:
+      tags:
+        - M7 管理員後台
+      summary: 管理員將指定使用者升級為教練（需 ADMIN）
+      description: |
+        與 M3 的 `POST /api/admin/coaches/{userId}` 做同一件事：建立一筆教練資料，並把該使用者的 role 改成 COACH。差別是這支**需要登入，且登入者的 role 必須是 `ADMIN`**。**僅 Spring Boot 版（livefit/）提供。**
+
+        與 M3 那支不同的地方：
+        - **欄位規則比較寬**：`experience_years` 可以是 0、`description` 可以是空字串或不給。管理頁面的表單預設就是年資 0、簡介空白，可以直接送出，細節留給教練本人到教練後台補。
+        - `profile_image_url` 規則相同：選填，但有給非空的值就必須以 `https` 開頭。
+        - **升級後該使用者已簽發的 token 全部作廢**：前端靠 token 裡的 role 決定顯示哪個介面，所以對方會被登出，重新登入後才進得了教練後台。
+        - 已登入但不是管理員回 **403**「需要管理員權限」。
+
+        只能升級一般使用者（role 為 USER）：已經是教練回 409，對象是管理員回 400。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: 要升級的使用者 id（uuid 字串），可從 GET /api/admin/users 取得
+          schema:
+            type: string
+            format: uuid
+          example: "f3b7d2c1-8a4e-4c6f-9d2b-5e1a7c3f9b8d"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - experience_years
+              properties:
+                experience_years:
+                  type: integer
+                  minimum: 0
+                  description: 教練年資（0 以上的整數）
+                description:
+                  type: string
+                  description: 教練介紹。選填，可以是空字串
+                profile_image_url:
+                  type: string
+                  description: 大頭貼網址。選填，可不給或給空字串；但只要有值就必須以 https 開頭
+            examples:
+              表單預設值:
+                summary: 管理頁面表單的預設值，可直接送出
+                value:
+                  experience_years: 0
+                  description: ""
+                  profile_image_url: ""
+              完整填寫:
+                value:
+                  experience_years: 3
+                  description: "瑜伽與皮拉提斯雙修，擅長帶初學者"
+                  profile_image_url: "https://example.com/avatar.png"
+      responses:
+        "201":
+          description: 升級成功，回傳格式與 M3 的升級教練相同
+          content:
+            application/json:
+              example:
+                status: success
+                data:
+                  user:
+                    name: "小美"
+                    role: "COACH"
+                  coach:
+                    id: "a1c5e8f2-3b7d-4e9a-8c6f-2d4b9e1a7c3f"
+                    user_id: "f3b7d2c1-8a4e-4c6f-9d2b-5e1a7c3f9b8d"
+                    experience_years: 0
+                    description: ""
+                    profile_image_url: ""
+                    created_at: "2026-10-11T02:00:00.000Z"
+                    updated_at: "2026-10-11T02:00:00.000Z"
+        "400":
+          description: |
+            可預期的失敗，依情境回不同訊息：
+            - 沒有 body、experience_years 不是 0 以上的整數、profile_image_url 有值但不是 https 開頭 →「欄位未填寫正確」
+            - userId 查不到對應的使用者 →「使用者不存在」
+            - userId 是管理員 →「只能升級一般使用者」
+          content:
+            application/json:
+              examples:
+                欄位未填寫正確:
+                  value:
+                    status: failed
+                    message: "欄位未填寫正確"
+                使用者不存在:
+                  value:
+                    status: failed
+                    message: "使用者不存在"
+                對象是管理員:
+                  value:
+                    status: failed
+                    message: "只能升級一般使用者"
+        "401":
+          description: 沒有登入，或 token 過期／無效
+          content:
+            application/json:
+              examples:
+                未登入:
+                  summary: 沒帶 token
+                  value:
+                    status: failed
+                    message: 請先登入
+                token無效:
+                  summary: token 無效、已被作廢或查無使用者
+                  value:
+                    status: failed
+                    message: 無效的 token
+        "403":
+          description: 已登入，但 role 不是 ADMIN
+          content:
+            application/json:
+              example:
+                status: failed
+                message: 需要管理員權限
+        "409":
+          description: 該使用者已經是教練
+          content:
+            application/json:
+              example:
+                status: failed
+                message: "使用者已經是教練"
   # ===== g5-public =====
   /api/coaches:
       get:
