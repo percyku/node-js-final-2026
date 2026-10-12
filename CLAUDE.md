@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `backend/` | Node.js + Express 5 + TypeORM | 正式繳交用，GitHub Actions 驗收的對象 |
 | `livefit/` | Spring Boot 3.5 + Spring Data JPA + Spring Security | `springboot-backend` 分支上的移植版，不列入作業驗收 |
 
-兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。`feature/admin-role` 起 Spring Boot 版再多了 **`ADMIN` 角色與 M7 管理員後台**（同文件 §13）。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub、Facebook 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
+兩者實作同一份 API 規格，差異記錄在 `docs/springboot-migration-plan.md` §8。Spring Boot 版另有 Postman Collection 與 Java 測試，分工見下方「測試的分工」。`feature/admin-role` 起 Spring Boot 版再多了 **`ADMIN` 角色與 M7 管理員後台**（同文件 §13）。`feature/social-login` 起 Spring Boot 版另外多了 **Google、GitHub、Facebook 登入**並改用**獨立資料庫**（同文件 §11），這些 Node 版沒有。
 
 ## 規格的唯一來源
 
@@ -50,7 +50,7 @@ cd backend && npm start           # CI 驗收用的啟動方式
 export JAVA_HOME=~/Library/Java/JavaVirtualMachines/temurin-21.0.11/Contents/Home
 cd livefit && mvn spring-boot:run      # 必須在 livefit/ 下執行，否則讀不到 .env
 cd livefit && mvn -DskipTests compile
-cd livefit && mvn test                # 第三方登入的整合測試，需要 postgres 與 livefit 資料庫在線
+cd livefit && mvn test                # 全部 Java 測試，需要 postgres 與 livefit 資料庫在線，不需要啟動後端
 ```
 
 > **本機 JDK 陷阱**：`/Library/Java/JavaVirtualMachines/` 下的 JDK 都是 x86 版，在 Apple Silicon 上會回 `bad CPU type`。只有 `~/Library/Java/JavaVirtualMachines/temurin-21.0.11` 可用。`JAVA_HOME` 每開一個新終端機都要重新 export，或直接寫進 `~/.zshrc`。
@@ -108,14 +108,14 @@ API_BASE_URL=http://localhost:8085 npm run test:m1
 `postman/` 是針對 Spring Boot 版的端到端測試，涵蓋 M0 ~ M7 與第三方登入的失敗案例（根目錄的 jest 測試沒有 M7）。Node 版不適用。
 
 ```bash
+npm run postman:build    # 產生 collection 與 environment；兩個 JSON 不進版本庫，剛 clone 下來要先跑這個
 npm run postman:test     # 用 newman 整份執行，需要 postgres 與 livefit 在線
-npm run postman:build    # 重新產生 collection 與 environment
 npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位址
 ```
 
 在 Postman 裡：Import `postman/livefit.postman_collection.json` → 在 collection 上按 Run。不需要手動登入或填 token。
 
-- **兩個 JSON 都是 `postman/build-collection.js` 產生的，不要直接改 JSON**，改腳本後跑 `npm run postman:build`。
+- **兩個 JSON 都是 `postman/build-collection.js` 產生的，列在 `.gitignore`、不進版本庫**。不要直接改 JSON，改腳本後跑 `npm run postman:build`；`postman:test` 不會自動產生，檔案不存在時要先跑 build。
 - **斷言有兩層**。流程斷言寫在腳本裡，照 livefit 的實際行為檢查狀態碼、訊息與資料；名稱以 `[openapi]` 開頭的是 collection 層級的 script，拿每支回應比對 `docs/openapi.yaml`。
 - **以下情況要重新產生**：改了 `docs/openapi.yaml`（openapi 驗證是從它讀出來的）；改了 `ErrorMessages.java` 的訊息（要同步改腳本開頭的 `MSG`）；新增端點（在腳本對應的資料夾加請求）。
 - **要整份依序執行**，請求之間靠 collection 變數串接 token 與 id，只跑中間某個資料夾會拿到上一輪的舊值。
@@ -124,6 +124,34 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - openapi 的回應 schema 沒有寫 `required`，約三分之一的回應只有範例沒有 schema。腳本因此把文件列出的欄位都當成必須出現，沒有 schema 的從範例推結構。在 openapi 補上 schema 後驗證會自動變嚴。
 - 腳本讀 YAML 用的 `js-yaml` 是 jest 帶進來的間接相依，沒有寫進 `package.json`。
 - 在 sandbox 裡連不到 localhost，檢查連接埠會誤判成後端沒開；執行 `postman:test` 要在 sandbox 外。
+
+### 測試的分工（僅 `livefit/`）
+
+三套測試測的層面不同，**不要追求每一套都涵蓋全部**。同一件事寫三遍不會變三倍保險，只會讓改一句錯誤訊息要改三個地方。
+
+| 測試 | 位置 | 負責 | 需要 |
+|---|---|---|---|
+| jest 黑箱測試 | 根目錄 `test/` | M1 ~ M6 的作業驗收合約。題目給的，不動 | 後端在線 |
+| Postman Collection | `postman/` | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml` | 後端與資料庫在線 |
+| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管 | 多數要資料庫在線，不需要啟動後端 |
+
+- **不要在 Java 用 MockMvc 把 M1 ~ M6 的「打 API 看狀態碼與訊息」再寫一遍**，那和 jest、Postman 重複。
+- **不要在根目錄 `test/` 加 M7 的 jest 測試**：Node 版沒有 M7，加了之後 `npm test` 對 Node 後端會失敗。
+- M7 有兩個地方驗：`AdminUserApiTest`（測完會清資料）與 Postman 的 M7 資料夾（資料會留下）。改 M7 的邏輯時兩個都跑；只跑一個就選 `mvn test`。
+
+寫 Java 測試要注意的事：
+
+- **連的是開發用的 `livefit` 資料庫，不是另外的測試資料庫。** 每個測試都要在 `@AfterEach` 呼叫 `fixtures.cleanUp()`；新增會建資料的 helper 時，要把 id 記進 `BookingFixtures` 的清單並在 `cleanUp` 依外鍵順序刪。測試建的資料 Email 是 `svc-test-*@example.com`、名稱以「測試」開頭，中斷後有殘留可以用這個找。
+- **後端沒有可替換的時鐘，都是直接呼叫 `Instant.now()`。** 要測「報名發生在某個時間點」只能事後用 SQL 改 `course_booking.created_at`。欄位是 `timestamp without time zone`、內容是 UTC，要用 `CAST(? AS timestamp)` 搭配字串，不要傳 `Timestamp` 物件（JDBC 會依 JVM 時區換算）。
+- **營收金額不要連著真的資料庫測。** 均價是資料庫裡「所有」方案的 Σprice ÷ Σcredit_amount，別人建的方案也會算進去，所以金額只在 `CoachRevenueCalculationTest` 用假的 repository 驗。
+- 併發測試用 `@RepeatedTest`，只跑一次可能剛好通過。改 `book` 之後若偶爾失敗，那就是真的有競爭，不要當成不穩定的測試而忽略。
+
+### 報名的鎖與月營收的算法（僅 `livefit/`）
+
+- `CourseService.book` 進入後先鎖使用者、再鎖課程（`findByIdForUpdate`）。鎖使用者擋重複報名與堂數超扣，鎖課程擋超過名額。**順序固定是先使用者、後課程**，之後若有別的地方也要同時鎖這兩種資料列，必須用同樣的順序，否則會死結。
+- `book` 寫入要用 `saveAndFlush`，不要改回 `save`：`save` 的 INSERT 拖到交易提交才送出，唯一約束的例外會接不到而變成 500。
+- 取消報名沒有上鎖。同一筆同時取消兩次都會回成功，結果仍是已取消，資料不會錯。
+- 月營收（`AdminCoachService.getRevenue`）**一定要先乘筆數再除總堂數**，不要為了可讀性改回先算均價：1000 元 3 堂、3 筆報名先除會算成 999，照 openapi 的公式應該是 1000。
 
 ## 架構要點
 

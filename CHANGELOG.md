@@ -6,11 +6,43 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-12 — 合併 Java 測試與 Postman Collection，新增 Postman Collection 的紀錄
+
+`feature/livefit-service-tests` 與 `feature/postman-collection` 都已 merge 回 `springboot-backend`（`61ab39a`、`3ecee7a`，沒有衝突，**尚未 push**）。下面兩筆 2026-10-12、2026-10-11 是前者的內容；後者原本沒有自己的紀錄，補在這裡。
+
+### Postman Collection（`postman/`）
+
+針對 Spring Boot 版的端到端測試：158 支請求、451 個斷言，涵蓋 M0 ~ M7 與第三方登入的失敗案例。Node 版不適用。
+
+- `postman/livefit.postman_collection.json` 與 `livefit.postman_environment.json` 都由 `postman/build-collection.js` 產生，不要直接改 JSON。**這兩個檔案合併後已列進 `.gitignore`、從版本庫移除**，剛 clone 下來要先跑 `npm run postman:build`。
+- 根目錄 `package.json` 多了 `postman:build`（重新產生）與 `postman:test`（用 newman 整份執行）。根目錄 `package.json` 是 README 宣告不可修改的檔案，**這個改動不要 merge 回 `main`**。
+- 請求之間用 collection 變數串接 token 與 id，不需手動登入；要整份依序執行。
+- 斷言有兩層：流程斷言照 livefit 的實際行為寫在腳本裡；名稱以 `[openapi]` 開頭的拿每支回應比對 `docs/openapi.yaml`。
+- 使用方式與注意事項在 `CLAUDE.md` 的「Postman Collection」與 `postman/README.md`。
+
+### 文件
+
+- `CLAUDE.md` 新增「測試的分工」與「報名的鎖與月營收的算法」兩節，內容取自 2026-10-11 那筆的討論結論。
+- `docs/springboot-migration-plan.md`：§6 的營收公式改成先乘後除、§8 的差異表加上第 13 項（報名上鎖與唯一約束）、新增 §15 列出三套測試的位置與執行方式。
+- 2026-10-11 那筆的「待決事項」小節已刪掉：合併與唯一約束都做完了，剩下的一項移到下面。
+
+### 合併後的驗證
+
+- `mvn test` 122 項通過。
+- `npm run postman:build` 重新產生的 collection 與當時版本庫裡的完全相同（之後才把產生的檔案移出版本庫）。
+- 合併後沒有再啟動後端跑 jest 與 Postman。兩個分支改的檔案不重疊（一邊是 `livefit/` 與文件，一邊是 `postman/` 與 `package.json`），合併前對同一份 `livefit/` 程式碼跑過，結果見下一筆。
+
+### 還沒做的
+
+- **CI**。要做的話先接 `mvn test`，它不需要另外啟動後端，但需要 postgres 與 `livefit` 資料庫。
+
+---
+
 ## 2026-10-12 — `course_booking` 加唯一約束，重啟後補驗 HTTP 層
 
-分支：`feature/livefit-service-tests`（**尚未 merge**）
+分支：`feature/livefit-service-tests`（2026-10-12 已 merge 回 `springboot-backend`）
 
-處理 2026-10-11 那筆留下的待決事項 2，以及當時沒驗完的 HTTP 層。Node 版、`frontend/`、`docs/openapi.yaml`、根目錄 `test/` 都沒有改動。
+處理 2026-10-11 那筆當時留下的待決事項（要不要加唯一約束），以及當時沒驗完的 HTTP 層。Node 版、`frontend/`、`docs/openapi.yaml`、根目錄 `test/` 都沒有改動。
 
 ### 改了什麼
 
@@ -54,33 +86,13 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ## 2026-10-11 — 補 M5 / M6 的 Java 測試，修正同時報名超賣與月營收少 1 元
 
-分支：`feature/livefit-service-tests`（從 `springboot-backend` 的 `d38fc36` 開出，已 commit 三筆 `fdcb024`、`2088b84`、`a949940`，**尚未 merge**）
+分支：`feature/livefit-service-tests`（從 `springboot-backend` 的 `d38fc36` 開出，2026-10-12 已 merge 回去）
 
 Node 版（`backend/`）、`frontend/`、`docs/`、根目錄 `test/` 都沒有改動。
 
-### 待決事項（決定並執行後刪掉這一小節，同時把定案的內容更新到 `CLAUDE.md`）
-
-`springboot-backend` 上有兩個互相獨立、還沒合併的分支：
-
-| 分支 | 內容 | 狀態 |
-|---|---|---|
-| `feature/postman-collection` | `postman/` 目錄、根目錄 `package.json` 的 `postman:build` / `postman:test`、`CLAUDE.md` 的「Postman Collection」小節 | 已 commit 兩筆（`c5d552a`、`cca9597`），未 push |
-| `feature/livefit-service-tests` | 本筆與 2026-10-12 那筆紀錄的內容 | 都已 commit，未 push |
-
-要決定的事：
-
-1. 兩個分支要不要 merge 回 `springboot-backend`。
-2. ~~`course_booking` 要不要加 `(user_id, course_id)` 的唯一約束~~ 已在 2026-10-12 加上，見上一筆。
-3. CI 之後再做。要做的話先接 `mvn test`，它不需要另外啟動後端。
-
-定案後要補的文件：
-
-- `CLAUDE.md` 加一節「測試的分工」，內容取自本筆的「三套測試各自負責什麼」「寫 Java 測試要注意的事」「報名的鎖」「月營收要先乘後除」。這個分支上的 `CLAUDE.md` 今天刻意沒有動。
-- `feature/postman-collection` 還沒有自己的 CHANGELOG 紀錄，merge 時補一筆。它的 `CLAUDE.md` 已經有「Postman Collection」小節，和上面要加的那一節位置不同，預期不會衝突。
-
 ### 要解決的問題
 
-M1 ~ M6 只有根目錄的 jest 黑箱測試（與另一個分支上的 Postman Collection），兩者都是一支一支打 API、只看回應，有幾類情況測不到：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界。這次在 Java 補上這幾類，補的過程抓到兩個既有的 bug 並修掉。
+M1 ~ M6 只有根目錄的 jest 黑箱測試（與當時在另一個分支上的 Postman Collection），兩者都是一支一支打 API、只看回應，有幾類情況測不到：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界。這次在 Java 補上這幾類，補的過程抓到兩個既有的 bug 並修掉。
 
 ### 修掉的兩個 bug
 
@@ -128,7 +140,7 @@ cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次�
 | 測試 | 位置 | 負責 | 需要 |
 |---|---|---|---|
 | jest 黑箱測試 | 根目錄 `test/` | M1 ~ M6 的作業驗收合約。題目給的，不動 | 後端在線 |
-| Postman Collection | `postman/`（在 `feature/postman-collection`） | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml`、手動操作時不用自己貼 token | 後端與資料庫在線 |
+| Postman Collection | `postman/` | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml`、手動操作時不用自己貼 token | 後端與資料庫在線 |
 | Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管 | 多數要資料庫在線，不需要啟動後端 |
 
 考慮過、決定不做的兩件事：
@@ -158,7 +170,7 @@ cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次�
 
 ### 沒有做的
 
-- **`course_booking` 當時沒有加 `(user_id, course_id)` 的唯一約束**，擋重複只靠 `book` 裡的鎖。已在 2026-10-12 加上；當時以為 `ddl-auto=update` 不會把約束套到既有的表，實測會，見上一筆。
+- **`course_booking` 當時沒有加 `(user_id, course_id)` 的唯一約束**，擋重複只靠 `book` 裡的鎖。已在 2026-10-12 加上；當時以為 `ddl-auto=update` 不會把約束套到既有的表，實測會，見 2026-10-12 加唯一約束那一筆。
 - **取消報名沒有上鎖。** 同一筆同時取消兩次都會回成功，結果仍是已取消，資料不會錯。
 
 ### 驗證
@@ -166,7 +178,7 @@ cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次�
 - `mvn test` 119 項全數通過（原有 55 項、新增 64 項），沒有停用的測試。
 - 併發的三個案例修正前 15 次全失敗，修正後 15 次全過；營收少 1 元的四組數字修正前全失敗，修正後全過。
 - Java 測試跑完後資料庫沒有殘留的測試資料。
-- Postman Collection 451 個斷言通過，但打的是修改前就啟動的後端，無法確認它已重新載入新的程式碼。2026-10-12 已重啟後端重跑，見上一筆。
+- Postman Collection 451 個斷言通過，但打的是修改前就啟動的後端，無法確認它已重新載入新的程式碼。2026-10-12 已重啟後端重跑，見 2026-10-12 加唯一約束那一筆。
 
 ---
 

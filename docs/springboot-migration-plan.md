@@ -259,7 +259,7 @@ anyRequest()                                 → authenticated
   1. `COUNT(DISTINCT cb.user_id)` → `participants`
   2. `COUNT(cb.id)` → `course_count`（皆為 `cancelled_at IS NULL` 且 `EXTRACT(YEAR/MONTH FROM cb.created_at)` 命中）
   3. `SUM(credit_amount)`, `SUM(price)` FROM `credit_packages` → 單堂均價
-- `revenue = floor(course_count × 單堂均價)`；教練無任何課程 → 三個值都回 0
+- `revenue = floor(course_count × Σprice ÷ Σcredit_amount)`，**先乘筆數再除總堂數**；先把均價除成小數再乘，總額剛好整除時會少 1 元（1000 元 3 堂、3 筆會算成 999）。教練無任何課程 → 三個值都回 0
 
 **加分題** `POST /api/upload` — openapi 標明不列驗收、前端未呼叫。**本次不實作**。
 
@@ -301,6 +301,7 @@ request.get(`coaches/?per=${per}&page=${page}`)   // baseURL 為 http://127.0.0.
 | 10 | `getCoachProfile` 在 coach 資料缺失時 NPE → 500 | 回 400 `找不到該教練` |
 | 11 | 註冊與修改名稱不檢查 `name` 長度，超過 `users.name` 的 `varchar(50)` 時資料庫寫入失敗 → 500 | 去除前後空白後超過 50 字回 400 `欄位未填寫正確` |
 | 12 | 註冊是「先查 email 再寫入」，兩個同 email 的請求同時到時，後者撞 unique 約束 → 500 | 接住約束衝突後重查，回 409 `Email 已被使用`（Google 登入首次建立帳號的併發同理，改用已建好的帳號照常登入） |
+| 13 | 報名的三項檢查（報名過、堂數、名額）是先查再寫，沒有交易也沒有上鎖，`course_booking` 也沒有唯一約束（讀程式碼得知，沒有對 Node 版實測） | `CourseService.book` 先鎖使用者再鎖課程，同時送出的請求不會超賣；`course_booking` 另有 `(user_id, course_id)` 唯一約束（§14） |
 
 **刻意保留的 Node 行為**（openapi 也如此規範，不改）：
 
@@ -870,3 +871,18 @@ ALTER TABLE course_booking ADD CONSTRAINT uk_course_booking_user_course UNIQUE (
 
 - `cd livefit && mvn test`：122 項通過。
 - 對重啟後的後端：根目錄 `npm test` 68 項通過，Postman Collection 451 個斷言通過。
+
+---
+
+## 15. 測試
+
+Spring Boot 版有三套測試，各自負責的範圍與寫 Java 測試的注意事項在根目錄 `CLAUDE.md` 的「測試的分工」，討論過程在 `CHANGELOG.md` 2026-10-11 那一筆。
+
+| 測試 | 位置 | 執行 |
+|---|---|---|
+| jest 黑箱測試（題目給的，M1 ~ M6） | 根目錄 `test/` | `npm test`，需要後端在線 |
+| Postman Collection（M0 ~ M7 與 openapi 比對） | `postman/` | `npm run postman:build` 後 `npm run postman:test`，需要後端在線 |
+| Java 測試 | `livefit/src/test/` | `cd livefit && mvn test`，需要資料庫在線，不需要啟動後端 |
+
+- Postman 的兩個 JSON 由 `postman/build-collection.js` 產生，不進版本庫。
+- 根目錄 `package.json` 為了 Postman 加了 `postman:build`、`postman:test` 兩個指令，這個改動不要 merge 回 `main`。
