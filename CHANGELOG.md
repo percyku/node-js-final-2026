@@ -6,9 +6,55 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-12 — `course_booking` 加唯一約束，重啟後補驗 HTTP 層
+
+分支：`feature/livefit-service-tests`（**尚未 merge**）
+
+處理 2026-10-11 那筆留下的待決事項 2，以及當時沒驗完的 HTTP 層。Node 版、`frontend/`、`docs/openapi.yaml`、根目錄 `test/` 都沒有改動。
+
+### 改了什麼
+
+- `CourseBooking`：`@Table` 加上 `uk_course_booking_user_course`，欄位是 `(user_id, course_id)`。已取消的報名也算在內，與「取消過的課不能再報名」的規則一致，所以不是只管未取消資料的部分索引。
+- `CourseService.book`：寫入改用 `saveAndFlush`，接到 `DataIntegrityViolationException` 時回 400 `已經報名過此課程`。鎖與三項檢查的順序都沒有動。
+
+### 約束與鎖的分工
+
+- **鎖仍然是主要的防線，不能因為有約束就拿掉。** 約束只擋得住「同一人同一堂課」的重複，名額超賣與堂數扣成負的仍然只靠 `book` 裡的鎖。
+- 約束擋的是鎖管不到的情況：有人拿掉鎖、繞過 `book` 直接寫入、或手動改資料。
+- **`book` 裡一定要用 `saveAndFlush`，不要改回 `save`。** `save` 的 INSERT 會拖到交易提交才送出，例外在方法外才丟出來，接不到，使用者會看到 500 而不是 `已經報名過此課程`。
+
+### 既有資料庫不用手動處理
+
+10-11 那筆寫的「`ddl-auto=update` 不會把約束套到既有的表」**實測不成立**。Hibernate 6.6 啟動時發現表上沒有這個約束，會先送 `drop constraint if exists` 再 `add constraint`，本機的 `livefit` 資料庫（55 筆報名、沒有重複）就是這樣補上的。之後再啟動不會重建（約束的 oid 沒變）。
+
+第一次啟動時 log 會有一行 `constraint "uk_course_booking_user_course" ... does not exist, skipping` 的 WARN，那是 `drop ... if exists` 的回應，可以忽略。
+
+沒有實測的情況：表裡已經有重複的 `(user_id, course_id)` 時約束會加不上去。升級其他環境前先照 `docs/springboot-migration-plan.md` §14 的 SQL 檢查。
+
+### 新增的測試
+
+| 檔案 | 測什麼 | 連資料庫 |
+|---|---|---|
+| `BookingDatabaseStateTest`（加 2 項） | 繞過 `book` 直接寫入第二筆會被資料庫擋下；已取消的報名也算 | 是 |
+| `BookingDuplicateBackstopTest`（新增，1 項） | 檢查都通過、寫入時才被約束擋下時，`book` 回 400 `已經報名過此課程` | 否（假的 repository） |
+
+### 驗證
+
+- `mvn test` 122 項全數通過（原有 119 項、新增 3 項），沒有停用的測試。併發的三個案例 15 次全過。
+- Java 測試跑完後資料庫沒有殘留的測試資料。
+- **HTTP 層已對重啟後的後端驗過**：根目錄 `npm test` 68 項通過；Postman Collection 158 個請求、451 個斷言通過。這也補上了 10-11 那筆兩個修正（報名上鎖、月營收先乘後除）當時沒驗到的部分。
+- Postman 的檔案是用 `git show feature/postman-collection:postman/livefit.postman_collection.json` 取到暫存目錄執行的，沒有切分支。
+- jest 與 Postman 各在 `livefit` 資料庫留下一輪測試帳號，這是既有行為。
+
+### 沒有做的
+
+- 沒有從 HTTP 同時送出多個報名請求來驗。併發只在 Java 直接呼叫 service 驗過；jest 與 Postman 都是一支一支打。
+
+---
+
 ## 2026-10-11 — 補 M5 / M6 的 Java 測試，修正同時報名超賣與月營收少 1 元
 
-分支：`feature/livefit-service-tests`（從 `springboot-backend` 的 `d38fc36` 開出，**尚未 merge**）
+分支：`feature/livefit-service-tests`（從 `springboot-backend` 的 `d38fc36` 開出，已 commit 三筆 `fdcb024`、`2088b84`、`a949940`，**尚未 merge**）
 
 Node 版（`backend/`）、`frontend/`、`docs/`、根目錄 `test/` 都沒有改動。
 
@@ -19,12 +65,12 @@ Node 版（`backend/`）、`frontend/`、`docs/`、根目錄 `test/` 都沒有�
 | 分支 | 內容 | 狀態 |
 |---|---|---|
 | `feature/postman-collection` | `postman/` 目錄、根目錄 `package.json` 的 `postman:build` / `postman:test`、`CLAUDE.md` 的「Postman Collection」小節 | 已 commit 兩筆（`c5d552a`、`cca9597`），未 push |
-| `feature/livefit-service-tests` | 本筆紀錄的內容 | 2026-10-11 當下**尚未 commit**，先看 `git status` |
+| `feature/livefit-service-tests` | 本筆與 2026-10-12 那筆紀錄的內容 | 都已 commit，未 push |
 
 要決定的事：
 
 1. 兩個分支要不要 merge 回 `springboot-backend`。
-2. `course_booking` 要不要加 `(user_id, course_id)` 的唯一約束（見下方「沒有做的」）。
+2. ~~`course_booking` 要不要加 `(user_id, course_id)` 的唯一約束~~ 已在 2026-10-12 加上，見上一筆。
 3. CI 之後再做。要做的話先接 `mvn test`，它不需要另外啟動後端。
 
 定案後要補的文件：
@@ -112,7 +158,7 @@ cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次�
 
 ### 沒有做的
 
-- **`course_booking` 沒有加 `(user_id, course_id)` 的唯一約束**，擋重複只靠 `book` 裡的鎖。沒加的原因：`ddl-auto=update` 不會把約束套到既有的表，要手動 `ALTER TABLE`，而且資料庫裡若已有重複資料會加不上去。列為待決事項。
+- **`course_booking` 當時沒有加 `(user_id, course_id)` 的唯一約束**，擋重複只靠 `book` 裡的鎖。已在 2026-10-12 加上；當時以為 `ddl-auto=update` 不會把約束套到既有的表，實測會，見上一筆。
 - **取消報名沒有上鎖。** 同一筆同時取消兩次都會回成功，結果仍是已取消，資料不會錯。
 
 ### 驗證
@@ -120,7 +166,7 @@ cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次�
 - `mvn test` 119 項全數通過（原有 55 項、新增 64 項），沒有停用的測試。
 - 併發的三個案例修正前 15 次全失敗，修正後 15 次全過；營收少 1 元的四組數字修正前全失敗，修正後全過。
 - Java 測試跑完後資料庫沒有殘留的測試資料。
-- Postman Collection 451 個斷言通過，但打的是修改前就啟動的後端，無法確認它已重新載入新的程式碼。**HTTP 層要重啟後端再跑一次才算驗過。**
+- Postman Collection 451 個斷言通過，但打的是修改前就啟動的後端，無法確認它已重新載入新的程式碼。2026-10-12 已重啟後端重跑，見上一筆。
 
 ---
 
