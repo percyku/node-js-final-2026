@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.Instant;
@@ -15,9 +16,13 @@ import java.util.UUID;
  * 對應 backend/entities/CourseBooking.js，table: course_booking。
  * booking_at 與 created_at 在 TypeORM 都是 createDate，故兩者皆為建立時間。
  * 取消報名為軟刪除：只寫入 cancelled_at。
+ * 同一個人對同一堂課只能有一筆，已取消的也算，所以取消後不能再報名（Node 版沒有這個約束）。
  */
 @Entity
-@Table(name = "course_booking")
+@Table(name = "course_booking", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_course_booking_user_course",
+                columnNames = {"user_id", "course_id"})
+})
 public class CourseBooking {
 
     @Id

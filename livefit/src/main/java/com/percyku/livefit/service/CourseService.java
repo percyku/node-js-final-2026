@@ -8,6 +8,8 @@ import com.percyku.livefit.entity.CourseBooking;
 import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CourseRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
+import com.percyku.livefit.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,13 +24,16 @@ public class CourseService {
     private final CourseRepository courseRepository;
     private final CourseBookingRepository courseBookingRepository;
     private final CreditPurchaseRepository creditPurchaseRepository;
+    private final UserRepository userRepository;
 
     public CourseService(CourseRepository courseRepository,
                          CourseBookingRepository courseBookingRepository,
-                         CreditPurchaseRepository creditPurchaseRepository) {
+                         CreditPurchaseRepository creditPurchaseRepository,
+                         UserRepository userRepository) {
         this.courseRepository = courseRepository;
         this.courseBookingRepository = courseBookingRepository;
         this.creditPurchaseRepository = creditPurchaseRepository;
+        this.userRepository = userRepository;
     }
 
     /** 全站「進行中」課程：start_at <= now AND end_at > now */
@@ -43,10 +48,19 @@ public class CourseService {
     /**
      * 報名課程。四句固定錯誤訊息中有三句在這裡，順序與 Node 版一致：
      * 已報名 → 沒堂數 → 額滿。
+     *
+     * 下面三項檢查都是「先查再寫」，同時進來的請求會一起通過檢查而超賣，所以先鎖兩列讓它們排隊：
+     * 鎖使用者，同一個人的報名一次只處理一筆（擋重複報名與堂數被扣成負的）；
+     * 鎖課程，同一堂課的報名一次只處理一筆（擋超過名額）。
+     * 一律先鎖使用者再鎖課程，順序固定才不會互相等待而死結。
+     *
+     * course_booking 另有 (user_id, course_id) 的唯一約束，是鎖之外的第二道防線。
      */
     @Transactional
     public void book(UUID userId, UUID courseId) {
-        Course course = courseRepository.findById(courseId)
+        userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> ApiException.unauthorized(ErrorMessages.TOKEN_INVALID));
+        Course course = courseRepository.findByIdForUpdate(courseId)
                 .orElseThrow(() -> ApiException.badRequest(ErrorMessages.INVALID_ID));
 
         // 與 Node 版一致：不排除已取消的紀錄，因此取消後無法重新報名
@@ -65,7 +79,13 @@ public class CourseService {
             throw ApiException.badRequest(ErrorMessages.FIXED_FULL);
         }
 
-        courseBookingRepository.save(new CourseBooking(userId, courseId));
+        try {
+            // 用 saveAndFlush 讓 INSERT 當下就送出；用 save 的話會拖到交易提交，例外在這裡接不到
+            courseBookingRepository.saveAndFlush(new CourseBooking(userId, courseId));
+        } catch (DataIntegrityViolationException ex) {
+            // 有鎖的情況下不該走到這裡；走到代表上面的檢查被繞過，由唯一約束擋下
+            throw ApiException.badRequest(ErrorMessages.FIXED_ALREADY_BOOKED);
+        }
     }
 
     /** 取消報名：軟刪除，只寫入 cancelled_at，堂數自然歸還 */

@@ -6,6 +6,170 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-12 — `course_booking` 加唯一約束，重啟後補驗 HTTP 層
+
+分支：`feature/livefit-service-tests`（**尚未 merge**）
+
+處理 2026-10-11 那筆留下的待決事項 2，以及當時沒驗完的 HTTP 層。Node 版、`frontend/`、`docs/openapi.yaml`、根目錄 `test/` 都沒有改動。
+
+### 改了什麼
+
+- `CourseBooking`：`@Table` 加上 `uk_course_booking_user_course`，欄位是 `(user_id, course_id)`。已取消的報名也算在內，與「取消過的課不能再報名」的規則一致，所以不是只管未取消資料的部分索引。
+- `CourseService.book`：寫入改用 `saveAndFlush`，接到 `DataIntegrityViolationException` 時回 400 `已經報名過此課程`。鎖與三項檢查的順序都沒有動。
+
+### 約束與鎖的分工
+
+- **鎖仍然是主要的防線，不能因為有約束就拿掉。** 約束只擋得住「同一人同一堂課」的重複，名額超賣與堂數扣成負的仍然只靠 `book` 裡的鎖。
+- 約束擋的是鎖管不到的情況：有人拿掉鎖、繞過 `book` 直接寫入、或手動改資料。
+- **`book` 裡一定要用 `saveAndFlush`，不要改回 `save`。** `save` 的 INSERT 會拖到交易提交才送出，例外在方法外才丟出來，接不到，使用者會看到 500 而不是 `已經報名過此課程`。
+
+### 既有資料庫不用手動處理
+
+10-11 那筆寫的「`ddl-auto=update` 不會把約束套到既有的表」**實測不成立**。Hibernate 6.6 啟動時發現表上沒有這個約束，會先送 `drop constraint if exists` 再 `add constraint`，本機的 `livefit` 資料庫（55 筆報名、沒有重複）就是這樣補上的。之後再啟動不會重建（約束的 oid 沒變）。
+
+第一次啟動時 log 會有一行 `constraint "uk_course_booking_user_course" ... does not exist, skipping` 的 WARN，那是 `drop ... if exists` 的回應，可以忽略。
+
+沒有實測的情況：表裡已經有重複的 `(user_id, course_id)` 時約束會加不上去。升級其他環境前先照 `docs/springboot-migration-plan.md` §14 的 SQL 檢查。
+
+### 新增的測試
+
+| 檔案 | 測什麼 | 連資料庫 |
+|---|---|---|
+| `BookingDatabaseStateTest`（加 2 項） | 繞過 `book` 直接寫入第二筆會被資料庫擋下；已取消的報名也算 | 是 |
+| `BookingDuplicateBackstopTest`（新增，1 項） | 檢查都通過、寫入時才被約束擋下時，`book` 回 400 `已經報名過此課程` | 否（假的 repository） |
+
+### 驗證
+
+- `mvn test` 122 項全數通過（原有 119 項、新增 3 項），沒有停用的測試。併發的三個案例 15 次全過。
+- Java 測試跑完後資料庫沒有殘留的測試資料。
+- **HTTP 層已對重啟後的後端驗過**：根目錄 `npm test` 68 項通過；Postman Collection 158 個請求、451 個斷言通過。這也補上了 10-11 那筆兩個修正（報名上鎖、月營收先乘後除）當時沒驗到的部分。
+- Postman 的檔案是用 `git show feature/postman-collection:postman/livefit.postman_collection.json` 取到暫存目錄執行的，沒有切分支。
+- jest 與 Postman 各在 `livefit` 資料庫留下一輪測試帳號，這是既有行為。
+
+### 沒有做的
+
+- 沒有從 HTTP 同時送出多個報名請求來驗。併發只在 Java 直接呼叫 service 驗過；jest 與 Postman 都是一支一支打。
+
+---
+
+## 2026-10-11 — 補 M5 / M6 的 Java 測試，修正同時報名超賣與月營收少 1 元
+
+分支：`feature/livefit-service-tests`（從 `springboot-backend` 的 `d38fc36` 開出，已 commit 三筆 `fdcb024`、`2088b84`、`a949940`，**尚未 merge**）
+
+Node 版（`backend/`）、`frontend/`、`docs/`、根目錄 `test/` 都沒有改動。
+
+### 待決事項（決定並執行後刪掉這一小節，同時把定案的內容更新到 `CLAUDE.md`）
+
+`springboot-backend` 上有兩個互相獨立、還沒合併的分支：
+
+| 分支 | 內容 | 狀態 |
+|---|---|---|
+| `feature/postman-collection` | `postman/` 目錄、根目錄 `package.json` 的 `postman:build` / `postman:test`、`CLAUDE.md` 的「Postman Collection」小節 | 已 commit 兩筆（`c5d552a`、`cca9597`），未 push |
+| `feature/livefit-service-tests` | 本筆與 2026-10-12 那筆紀錄的內容 | 都已 commit，未 push |
+
+要決定的事：
+
+1. 兩個分支要不要 merge 回 `springboot-backend`。
+2. ~~`course_booking` 要不要加 `(user_id, course_id)` 的唯一約束~~ 已在 2026-10-12 加上，見上一筆。
+3. CI 之後再做。要做的話先接 `mvn test`，它不需要另外啟動後端。
+
+定案後要補的文件：
+
+- `CLAUDE.md` 加一節「測試的分工」，內容取自本筆的「三套測試各自負責什麼」「寫 Java 測試要注意的事」「報名的鎖」「月營收要先乘後除」。這個分支上的 `CLAUDE.md` 今天刻意沒有動。
+- `feature/postman-collection` 還沒有自己的 CHANGELOG 紀錄，merge 時補一筆。它的 `CLAUDE.md` 已經有「Postman Collection」小節，和上面要加的那一節位置不同，預期不會衝突。
+
+### 要解決的問題
+
+M1 ~ M6 只有根目錄的 jest 黑箱測試（與另一個分支上的 Postman Collection），兩者都是一支一支打 API、只看回應，有幾類情況測不到：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界。這次在 Java 補上這幾類，補的過程抓到兩個既有的 bug 並修掉。
+
+### 修掉的兩個 bug
+
+**同時報名會超賣**（`CourseService.book`）
+
+`book` 的三項檢查（報名過、堂數、名額）都是先查再寫，沒有上鎖。用 8 條執行緒同時報名，三種情況每次都重現：
+
+| 情境 | 應該 | 修正前 |
+|---|---|---|
+| 名額 1 的課，8 人同時報名 | 1 人成功 | 多人成功 |
+| 同一人對同一堂課同時送 8 次 | 1 筆 | 8 筆 |
+| 只剩 1 堂，同時報 8 堂不同的課 | 剩餘 0 | 剩餘 -4 到 -7 |
+
+第二種在現實最容易發生：連點兩下報名按鈕就可能觸發。
+
+**月營收在總額剛好整除時少 1 元**（`AdminCoachService.getRevenue`）
+
+原本先把均價除到小數 10 位再乘筆數。1000 元 3 堂、3 筆報名會算成 333.3333333333 × 3 = 999.99…，捨去後是 999，照 openapi 的公式 floor(筆數 × Σprice ÷ Σcredit_amount) 應該是 1000。根目錄的 m6 測試只測 1 筆與 2 筆，所以沒抓到。
+
+### 改了什麼
+
+- `CourseService.book`：進入後先 `userRepository.findByIdForUpdate`，再 `courseRepository.findByIdForUpdate`。鎖使用者擋重複報名與堂數超扣，鎖課程擋超過名額。錯誤訊息與檢查順序不變。
+- `CourseRepository`：新增 `findByIdForUpdate`（`PESSIMISTIC_WRITE`）。
+- `AdminCoachService.getRevenue`：改成先乘筆數再除總堂數。
+
+### 新增的測試（`livefit/src/test/java/com/percyku/livefit/service/`）
+
+| 檔案 | 測什麼 | 連資料庫 |
+|---|---|---|
+| `BookingDatabaseStateTest` | 取消只寫 `cancelled_at`、建立時間不變；失敗的報名與購買不留資料；購買存的是當下的堂數與價格 | 是 |
+| `BookingConcurrencyTest` | 上表三種同時報名的情境，各重複 5 次 | 是 |
+| `CoachRevenueMonthBoundaryTest` | 月初第一秒、月底最後一秒、跨年、去年同月、取消不計、別的教練不計、月份名稱格式 | 是 |
+| `CoachRevenueCalculationTest` | 營收金額的算法：捨去時機、沒有方案時不除以零、大金額不溢位 | 否（假的 repository） |
+| `BookingFixtures` | 上面三個連資料庫的測試共用的資料建立與清理 | |
+
+```bash
+cd livefit && mvn test                                          # 全部
+cd livefit && mvn test -Dtest='Booking*Test,CoachRevenue*Test'  # 只跑這次新增的
+```
+
+### 三套測試各自負責什麼
+
+這次討論後的結論：三套測的層面不同，**不要追求每一套都涵蓋全部**。同一件事寫三遍不會變三倍保險，只會讓改一句錯誤訊息要改三個地方。
+
+| 測試 | 位置 | 負責 | 需要 |
+|---|---|---|---|
+| jest 黑箱測試 | 根目錄 `test/` | M1 ~ M6 的作業驗收合約。題目給的，不動 | 後端在線 |
+| Postman Collection | `postman/`（在 `feature/postman-collection`） | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml`、手動操作時不用自己貼 token | 後端與資料庫在線 |
+| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管 | 多數要資料庫在線，不需要啟動後端 |
+
+考慮過、決定不做的兩件事：
+
+- **不在 Java 用 MockMvc 把 M1 ~ M6 的「打 API 看狀態碼與訊息」再寫一遍。** 那和 jest、Postman 重複，Java 這邊只補上表列的那幾類。
+- **不在根目錄 `test/` 加 M7 的 jest 測試。** `test/` 是 README 宣告不可修改的目錄；Node 版沒有 M7，加了之後 `npm test` 對 Node 後端會失敗；而且「從外部用 HTTP 驗 M7」Postman 已經在做。
+
+其他釐清過的事：
+
+- Postman Collection 的定位是**回歸測試**：改完後端、合併分支之前整份跑一次，提早發現「改 A 弄壞 B」。它只保護已經寫進去的行為，新功能要自己加請求，而且要有人去跑才有用。
+- 執行 collection **需要後端與資料庫都在線**；只有「產生」collection 的 `postman:build` 不需要。
+- collection 的流程與斷言是照 livefit 的程式碼手寫的，不是從 openapi 產生的；只有名稱以 `[openapi]` 開頭的那一層是讀 `docs/openapi.yaml`。
+- M7 有兩個地方驗：`AdminUserApiTest`（MockMvc，能直接查資料庫，測完會清資料）與 Postman 的 M7 資料夾（真的 HTTP，資料會留下）。改 M7 的邏輯時兩個都跑；只跑一個就選 `mvn test`。
+
+### 寫 Java 測試要注意的事
+
+- **連的是開發用的 `livefit` 資料庫，不是另外的測試資料庫。** 每個測試都要在 `@AfterEach` 呼叫 `fixtures.cleanUp()`；新增會建資料的 helper 時，要把 id 記進 `BookingFixtures` 的清單並在 `cleanUp` 依外鍵順序刪。測試建的資料 Email 是 `svc-test-*@example.com`、名稱以「測試」開頭，中斷後有殘留可以用這個找。
+- **後端沒有可替換的時鐘，都是直接呼叫 `Instant.now()`。** 要測「報名發生在某個時間點」只能事後用 SQL 改 `course_booking.created_at`。欄位是 `timestamp without time zone`、內容是 UTC，要用 `CAST(? AS timestamp)` 搭配字串，不要傳 `Timestamp` 物件（JDBC 會依 JVM 時區換算）。
+- **營收金額不要連著真的資料庫測。** 均價是資料庫裡「所有」方案的 Σprice ÷ Σcredit_amount，別人建的方案也會算進去，所以金額只在 `CoachRevenueCalculationTest` 用假的 repository 驗；連資料庫的那支只看人數與筆數。
+- 併發測試只跑一次可能剛好通過，所以用 `@RepeatedTest`。改 `book` 之後若偶爾失敗，那就是真的有競爭，不要當成不穩定的測試而忽略。
+
+### 注意
+
+- **鎖的順序固定是先使用者、後課程。** 之後若有別的地方也要同時鎖這兩種資料列，必須用同樣的順序，否則會死結。
+- 鎖使用者那一列會讓同一個人的報名與改名、改密碼、被升級教練互相等待，都是瞬間完成的操作。
+- 月營收**一定要先乘筆數再除總堂數**，不要為了可讀性改回先算均價。
+
+### 沒有做的
+
+- **`course_booking` 當時沒有加 `(user_id, course_id)` 的唯一約束**，擋重複只靠 `book` 裡的鎖。已在 2026-10-12 加上；當時以為 `ddl-auto=update` 不會把約束套到既有的表，實測會，見上一筆。
+- **取消報名沒有上鎖。** 同一筆同時取消兩次都會回成功，結果仍是已取消，資料不會錯。
+
+### 驗證
+
+- `mvn test` 119 項全數通過（原有 55 項、新增 64 項），沒有停用的測試。
+- 併發的三個案例修正前 15 次全失敗，修正後 15 次全過；營收少 1 元的四組數字修正前全失敗，修正後全過。
+- Java 測試跑完後資料庫沒有殘留的測試資料。
+- Postman Collection 451 個斷言通過，但打的是修改前就啟動的後端，無法確認它已重新載入新的程式碼。2026-10-12 已重啟後端重跑，見上一筆。
+
+---
+
 ## 2026-10-10 — Spring Boot 版專用的 Docker Compose
 
 分支：`springboot-backend`

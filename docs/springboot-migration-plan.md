@@ -839,3 +839,34 @@ docker compose -f compose.livefit.yml --env-file livefit/.env exec postgres \
 - `cd livefit && mvn test`：55 項通過，其中 `AdminUserApiTest` 22 項是這個分支新增的（預設管理員的建立與重跑、兩支 API 的 401 / 403、列表分頁與篩選、升級與舊 token 作廢、M3 端點不能動管理員、管理員的 email 走 Google 登入回 409、搜尋、建立管理員、重設管理員密碼）。
 - `frontend` 的 `vite build` 通過。
 
+---
+
+## 14. `course_booking` 的唯一約束（`feature/livefit-service-tests`）
+
+`course_booking` 加上 `uk_course_booking_user_course`：`UNIQUE (user_id, course_id)`。Node 版的表沒有這個約束。
+
+- 已取消的報名也算在內。取消是軟刪除、取消過的課不能再報名（§8），所以同一人同一堂課本來就只會有一筆。
+- 它是 `CourseService.book` 上鎖之外的第二道防線，只擋「同一人同一堂課」的重複；名額與堂數仍然靠鎖。
+- `book` 接到約束違反時回 400 `已經報名過此課程`。
+
+### 14.1 既有資料庫
+
+不用手動加。Hibernate 6.6 的 `ddl-auto=update` 啟動時發現表上沒有這個約束就會補上（2026-10-12 在本機 55 筆資料的 `livefit` 上實測），之後啟動不會重建。
+
+表裡已有重複資料時約束會加不上去（這個情況沒有實測）。升級前先檢查，查得到資料就先處理掉重複的再啟動：
+
+```sql
+SELECT user_id, course_id, COUNT(*) FROM course_booking
+GROUP BY user_id, course_id HAVING COUNT(*) > 1;
+```
+
+`DDL_AUTO` 不是 `update` 的環境要自己加：
+
+```sql
+ALTER TABLE course_booking ADD CONSTRAINT uk_course_booking_user_course UNIQUE (user_id, course_id);
+```
+
+### 14.2 驗證結果（2026-10-12）
+
+- `cd livefit && mvn test`：122 項通過。
+- 對重啟後的後端：根目錄 `npm test` 68 項通過，Postman Collection 451 個斷言通過。

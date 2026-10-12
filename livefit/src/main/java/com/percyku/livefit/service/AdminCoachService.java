@@ -255,10 +255,10 @@ public class AdminCoachService {
 
         long revenue = 0L;
         if (totalCredits != null && totalCredits.signum() > 0) {
-            // 單堂均價 = 全站方案總價 ÷ 全站方案總堂數；營收無條件捨去
-            BigDecimal perCreditPrice = totalPrice.divide(totalCredits, 10, RoundingMode.HALF_UP);
-            revenue = perCreditPrice.multiply(BigDecimal.valueOf(courseCount))
-                    .setScale(0, RoundingMode.FLOOR)
+            // 營收 = 報名筆數 × 單堂均價（全站方案總價 ÷ 總堂數），無條件捨去。
+            // 先乘再除：先算均價的話，除不盡的小數乘回去會差一點點，總額剛好整除時會少 1 元
+            revenue = totalPrice.multiply(BigDecimal.valueOf(courseCount))
+                    .divide(totalCredits, 0, RoundingMode.FLOOR)
                     .longValue();
         }
 
