@@ -54,7 +54,14 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ### 還沒做的
 
-- **CI**。要做的話先接 `mvn test`，它不需要另外啟動後端，但需要 postgres 與 `livefit` 資料庫。
+**CI**。2026-10-12 還沒決定要不要做。要做的話先接 `mvn test`，它不需要另外啟動後端，但需要 postgres 與 `livefit` 資料庫。當天先查到的事：
+
+- **不要改現有的 `.github/workflows/test.yml`**。那是題目給的 Node 版驗收，只在 push 到 `main` 時觸發，而且 `.github/` 是 README 宣告不可修改的目錄。Spring Boot 版要另開一個 workflow 檔，觸發分支設成 `springboot-backend`，這個檔案不要 merge 回 `main`。
+- **CI 上沒有 `livefit/.env`**，需要的值要寫在 workflow 的 `env`。`JWT_SECRET` 必填且至少 32 個位元組，沒設的話 Spring context 起不來，連資料庫的測試會全部失敗。資料庫連線用 `DB_HOST`、`DB_PORT`、`DB_USERNAME`、`DB_PASSWORD`、`DB_DATABASE`。
+- **資料庫名稱是 `livefit`**。現有 workflow 的 postgres service 建的是 `fitness`；新的 workflow 把 `POSTGRES_DB` 設成 `livefit` 就不用另外 `CREATE DATABASE`。表由 `ddl-auto=update` 在第一次啟動時建立。
+- **JDK 用 21**。
+- `./mvnw` 在 Linux runner 上應該能用：`CLAUDE.md` 寫的「不要用 `./mvnw`」是 macOS 的 `mktemp` 問題。**這一點沒有實測。**
+- 還沒決定的：只跑 `mvn test`，還是也在 CI 啟動後端跑 jest 與 Postman。後者要先 `npm run postman:build`（兩個 JSON 不在版本庫裡），而且 Postman 的 M7 依賴預設管理員 `admin@gmail.com` / `Admin123`。
 
 ---
 
