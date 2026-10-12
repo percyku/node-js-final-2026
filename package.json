@@ -13,7 +13,9 @@
     "test:m5": "jest test/m5.test.js --runInBand",
     "test:m6": "jest test/m6.test.js --runInBand",
     "test:smoke": "jest test/smoke.test.js --runInBand",
-    "db:reset": "docker compose down -v && docker compose up -d"
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "postman:build": "node postman/build-collection.js",
+    "postman:test": "npx --yes newman run postman/livefit.postman_collection.json"
   },
   "jest": {
     "testEnvironment": "node",
