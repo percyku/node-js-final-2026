@@ -63,6 +63,14 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 - `./mvnw` 在 Linux runner 上應該能用：`CLAUDE.md` 寫的「不要用 `./mvnw`」是 macOS 的 `mktemp` 問題。**這一點沒有實測。**
 - 還沒決定的：只跑 `mvn test`，還是也在 CI 啟動後端跑 jest 與 Postman。後者要先 `npm run postman:build`（兩個 JSON 不在版本庫裡），而且 Postman 的 M7 依賴預設管理員 `admin@gmail.com` / `Admin123`。
 
+做 CI 前**不用先補測試**。CI 只是把現有的測試自動跑起來，之後新增的測試會自動被涵蓋。該確認的是現有的 122 項換到 CI 的環境會不會過，下面幾點都**還沒有在 CI 上實測**，做法是先接上去跑一次，哪個失敗修哪個：
+
+- **全新的空資料庫**。CI 每次都從空的 `livefit` 開始，本機則累積了很多資料。讀過程式碼，現有測試都是自己建資料、結束時自己刪（`BookingFixtures.cleanUp`；`AdminUserApiTest` 用自己的管理員信箱 `m7-admin-test@example.com`，不依賴預設管理員），沒有看到預期資料庫裡已有某筆資料的測試。
+- **併發測試在 runner 上是否穩定**。`BookingConcurrencyTest` 開 8 條執行緒，GitHub 的 runner 核心數少、速度不固定。等待上限是就位 10 秒、取結果 30 秒；逾時的話先看是不是機器慢，不要直接當成不穩定的測試而停用。
+- **年份在跨年那一刻會不一致**。`CoachRevenueMonthBoundaryTest` 的 `YEAR` 是類別載入時用 `Year.now(UTC)` 算的，後端算營收時再取一次當年。只有剛好在 UTC 跨年前後執行才會受影響，本機不會遇到，CI 若排在那個時間點可能失敗一次。
+- **時區**。runner 是 UTC，本機是 UTC+8。改 `course_booking.created_at` 的測試已經用 `CAST(? AS timestamp)` 搭配字串避開 JVM 時區換算，預期不受影響。
+- **第三方登入的測試不需要真的金鑰**。`GoogleIdTokenVerifier` 換成假的，`GithubOAuthClientTest`、`FacebookOAuthClientTest` 不連外部服務，所以 `GOOGLE_CLIENT_ID` 等變數在 CI 可以留空。
+
 ---
 
 ## 2026-10-12 — `course_booking` 加唯一約束，重啟後補驗 HTTP 層
