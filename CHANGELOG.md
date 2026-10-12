@@ -26,6 +26,26 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 - `docs/springboot-migration-plan.md`：§6 的營收公式改成先乘後除、§8 的差異表加上第 13 項（報名上鎖與唯一約束）、新增 §15 列出三套測試的位置與執行方式。
 - 2026-10-11 那筆的「待決事項」小節已刪掉：合併與唯一約束都做完了，剩下的一項移到下面。
 
+### 清掉已合併的分支
+
+本機與遠端現在都只剩 `main` 與 `springboot-backend`。刪掉的分支內容都已經在 `springboot-backend` 裡，commit 與 merge commit 仍在歷史中，需要時可以用下表的 hash 重新開分支。
+
+| 分支 | 最後一筆 |
+|---|---|
+| `feature/social-login`（本機與 `origin`） | `22d85fb` |
+| `refactor/social-identity` | `00261c2` |
+| `feature/github-login` | `191593f` |
+| `feature/facebook-login` | `34773ac` |
+| `fix/social-prehijack` | `67aeca3` |
+| `fix/jwt-default-secret` | `6191712` |
+| `fix/user-write-errors` | `99d63a5` |
+| `feature/admin-role` | `a5a85dc` |
+| `feature/livefit-service-tests` | `f99a57a` |
+| `feature/postman-collection` | `cca9597` |
+
+- 2026-10-04 那筆寫的「`feature/social-login` 合併後保留不刪」到這裡為止。當時保留是為了撤回 Google 登入後還能重新合併；之後 GitHub 登入、Facebook 登入、共用層、帳號接管、ADMIN 角色都疊在它上面，已經不可能單獨撤回那一次合併。
+- 文件裡「`feature/xxx` 起…」的寫法指的是歷史上的時間點，分支已不存在。
+
 ### 合併後的驗證
 
 - `mvn test` 122 項通過。
