@@ -10,3 +10,7 @@ ask.md
 # 編輯器 / 工具的個人設定
 .vscode/
 .claude/settings.local.json
+
+# 由 postman/build-collection.js 產生，用 npm run postman:build 重新產生
+postman/livefit.postman_collection.json
+postman/livefit.postman_environment.json

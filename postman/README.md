@@ -4,13 +4,19 @@
 
 | 檔案 | 用途 |
 |---|---|
-| `livefit.postman_collection.json` | 請求與斷言，只匯入這個就能跑 |
-| `livefit.postman_environment.json` | 選用，要換受測位址或管理員帳密時才需要 |
+| `livefit.postman_collection.json` | 請求與斷言，只匯入這個就能跑。由腳本產生，不進版本庫 |
+| `livefit.postman_environment.json` | 選用，要換受測位址或管理員帳密時才需要。由腳本產生，不進版本庫 |
 | `build-collection.js` | 產生上面兩個檔案的腳本 |
 
 ## 執行
 
-先啟動 postgres 與 livefit（見根目錄 `CLAUDE.md`），確認 `GET http://localhost:8080/healthcheck` 回 `OK`。
+兩個 JSON 列在 `.gitignore`，剛 clone 下來時不存在，先在根目錄產生：
+
+```bash
+npm run postman:build
+```
+
+再啟動 postgres 與 livefit（見根目錄 `CLAUDE.md`），確認 `GET http://localhost:8080/healthcheck` 回 `OK`。
 
 **Postman**：Import `livefit.postman_collection.json` → 在 collection 上按 Run → Run。不需要手動登入或填 token。
 
