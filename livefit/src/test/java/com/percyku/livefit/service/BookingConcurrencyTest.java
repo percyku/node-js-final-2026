@@ -28,8 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 需要 livefit 資料庫在線。
  *
  * 這三個案例在 book 還沒上鎖時每次都失敗（名額 1 的課進了多人、同一人同一堂課寫進 8 筆、
- * 剩餘堂數變成負的）。course_booking 沒有 (user_id, course_id) 的唯一約束，擋重複只靠 book 裡的鎖，
- * 拿掉鎖或改鎖的順序前先跑這裡。
+ * 剩餘堂數變成負的）。course_booking 的 (user_id, course_id) 唯一約束只擋得住同一人同一堂課的重複，
+ * 名額與堂數仍然只靠 book 裡的鎖，拿掉鎖或改鎖的順序前先跑這裡。
  */
 @SpringBootTest
 @Import(BookingFixtures.class)

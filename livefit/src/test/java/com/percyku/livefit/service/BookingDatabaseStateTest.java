@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -240,6 +241,31 @@ class BookingDatabaseStateTest {
                 .isInstanceOf(ApiException.class);
 
         assertThat(bookingsOf(memberId).get(0).getCancelledAt()).isNull();
+    }
+
+    // ===== 唯一約束 =====
+    // 下面兩個繞過 book 直接寫入，驗的是資料庫本身會擋，不是 book 裡的檢查
+
+    @Test
+    void 繞過book直接寫入第二筆_被唯一約束擋下() {
+        courseBookingRepository.saveAndFlush(new CourseBooking(memberId, courseId));
+
+        assertThatThrownBy(() -> courseBookingRepository.saveAndFlush(new CourseBooking(memberId, courseId)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(bookingsOf(memberId)).hasSize(1);
+    }
+
+    @Test
+    void 已取消的報名也算在唯一約束內() {
+        fixtures.purchase(memberId, packageId);
+        courseService.book(memberId, courseId);
+        courseService.cancelBooking(memberId, courseId);
+
+        assertThatThrownBy(() -> courseBookingRepository.saveAndFlush(new CourseBooking(memberId, courseId)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(bookingsOf(memberId)).hasSize(1);
     }
 
     // ===== 輔助 =====

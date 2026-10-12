@@ -9,6 +9,7 @@ import com.percyku.livefit.repository.CourseBookingRepository;
 import com.percyku.livefit.repository.CourseRepository;
 import com.percyku.livefit.repository.CreditPurchaseRepository;
 import com.percyku.livefit.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +53,8 @@ public class CourseService {
      * 鎖使用者，同一個人的報名一次只處理一筆（擋重複報名與堂數被扣成負的）；
      * 鎖課程，同一堂課的報名一次只處理一筆（擋超過名額）。
      * 一律先鎖使用者再鎖課程，順序固定才不會互相等待而死結。
+     *
+     * course_booking 另有 (user_id, course_id) 的唯一約束，是鎖之外的第二道防線。
      */
     @Transactional
     public void book(UUID userId, UUID courseId) {
@@ -76,7 +79,13 @@ public class CourseService {
             throw ApiException.badRequest(ErrorMessages.FIXED_FULL);
         }
 
-        courseBookingRepository.save(new CourseBooking(userId, courseId));
+        try {
+            // 用 saveAndFlush 讓 INSERT 當下就送出；用 save 的話會拖到交易提交，例外在這裡接不到
+            courseBookingRepository.saveAndFlush(new CourseBooking(userId, courseId));
+        } catch (DataIntegrityViolationException ex) {
+            // 有鎖的情況下不該走到這裡；走到代表上面的檢查被繞過，由唯一約束擋下
+            throw ApiException.badRequest(ErrorMessages.FIXED_ALREADY_BOOKED);
+        }
     }
 
     /** 取消報名：軟刪除，只寫入 cancelled_at，堂數自然歸還 */
