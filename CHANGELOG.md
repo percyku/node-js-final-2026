@@ -8,7 +8,7 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ## 2026-10-12 — 合併 Java 測試與 Postman Collection，新增 Postman Collection 的紀錄
 
-`feature/livefit-service-tests` 與 `feature/postman-collection` 都已 merge 回 `springboot-backend`（`61ab39a`、`3ecee7a`，沒有衝突，**尚未 push**）。下面兩筆 2026-10-12、2026-10-11 是前者的內容；後者原本沒有自己的紀錄，補在這裡。
+`feature/livefit-service-tests` 與 `feature/postman-collection` 都已 merge 回 `springboot-backend`（`61ab39a`、`3ecee7a`，沒有衝突，已 push 到 `origin/springboot-backend`）。下面兩筆 2026-10-12、2026-10-11 是前者的內容；後者原本沒有自己的紀錄，補在這裡。
 
 ### Postman Collection（`postman/`）
 
