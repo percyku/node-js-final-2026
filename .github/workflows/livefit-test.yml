@@ -1,0 +1,81 @@
+name: livefit 測試
+
+# Spring Boot 版（livefit/）的 Java 測試，只跑 mvn test，不啟動後端。
+# 這個檔案只放在 springboot-backend 分支，不要 merge 回 main：
+# .github/ 是 README 宣告不可修改的目錄，main 上的 test.yml 是題目給的 Node 版驗收。
+# 沒有 workflow_dispatch：手動觸發要求 workflow 檔在預設分支（main）上，這裡用不到。
+
+on:
+  push:
+    branches: [springboot-backend]
+    paths:
+      - "livefit/**"
+      - ".github/workflows/livefit-test.yml"
+  pull_request:
+    branches: [springboot-backend]
+    paths:
+      - "livefit/**"
+      - ".github/workflows/livefit-test.yml"
+
+concurrency:
+  group: livefit-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: mvn test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.4-alpine3.20
+        env:
+          POSTGRES_USER: student
+          POSTGRES_PASSWORD: student666
+          # 直接建 livefit，不用另外 CREATE DATABASE；表由 ddl-auto=update 在第一個 Spring context 啟動時建立
+          POSTGRES_DB: livefit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U student -d livefit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    # CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡。
+    # 第三方登入的測試都換成假的或不連外，GOOGLE_CLIENT_ID 等變數留空即可
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USERNAME: student
+      DB_PASSWORD: student666
+      DB_DATABASE: livefit
+    defaults:
+      run:
+        working-directory: livefit
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: livefit/pom.xml
+
+      # JWT_SECRET 必填且至少 32 個位元組，沒有的話 Spring context 起不來。
+      # 每次執行隨機產生，不把密鑰寫進版本庫
+      - name: 產生這次執行用的 JWT_SECRET
+        run: |
+          secret=$(openssl rand -hex 32)
+          echo "::add-mask::$secret"
+          echo "JWT_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - name: mvn test
+        run: ./mvnw -B -ntp test
+
+      - name: 失敗時上傳測試報告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: livefit/target/surefire-reports/
