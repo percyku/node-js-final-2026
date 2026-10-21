@@ -6,6 +6,45 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-21 — 新增審查與測試用的三個 subagent
+
+分支：`springboot-backend`
+
+下面那筆（CI）的「還沒做的」列了三項：CI 第二階段、Jackson 型別轉換、選用的架構調整。開始做之前，先加上三個專案層級的 subagent，之後每一項改完都用它們檢查。`livefit/` 的程式碼沒有改動。
+
+### 新增
+
+`.claude/agents/`：
+
+- `security-reviewer`：權限、身分驗證、輸入驗證、CI 機密。工具只有 `Read, Grep, Glob`。
+- `code-reviewer`：業務邏輯與邊界、是否符合 `docs/openapi.yaml`、測試有沒有被刪除、跳過或放寬。工具只有 `Read, Grep, Glob`。
+- `test-runner`：執行 `mvn test`、jest、Postman，只回報失敗項目、位置與可能原因，不回傳完整 log。工具是 `Bash, Read`，沒有 Edit、Write；`model: haiku`。
+
+三項待辦各由誰檢查：
+
+| 項目 | 檢查重點 |
+|---|---|
+| CI 第二階段 | `security-reviewer` 看 workflow 有沒有印出密鑰、上傳的 artifact 有沒有含密鑰；`code-reviewer` 看有沒有用 `-DskipTests`、`continue-on-error` 等方式跳過測試；`test-runner` 先在本機跑 jest 與 Postman |
+| Jackson 型別轉換 | `security-reviewer` 看 400 的回應有沒有帶出 Jackson 的原始訊息、GitHub 與 Facebook 回應的解析會不會因此失敗；`code-reviewer` 看全域設定對各端點的影響，以及 Postman 有沒有補上驗證 |
+| 選用的架構調整 | `code-reviewer` 看交易範圍、上鎖順序、錯誤檢查的順序有沒有改變；`test-runner` 跑 `mvn test` |
+
+### 已知限制
+
+- 本機的 Claude Code（2.1.306）在 macOS 上預設沒有 `Grep`、`Glob`，搜尋走 Bash。依官方文件，subagent 的 `tools` 列了這兩個而沒列 `Bash` 時會單獨拿到它們，所以兩個 reviewer 能搜尋程式碼，但不能跑 git，呼叫時要在 prompt 附上 diff 或變更檔案清單。
+- `test-runner` 有 Bash，可以寫入專案目錄。「不改檔案、不起停服務」是 prompt 裡的規則，沒有用 hook 強制：hook 只能用關鍵字比對指令，擋不完整。
+
+### 文件
+
+- `CLAUDE.md` 新增「Subagent（`.claude/agents/`，僅 `livefit/`）」一節。
+
+### 驗證
+
+- frontmatter 的欄位與 `tools` 的行為對照過官方文件。
+- `test-runner` 用來判斷 8080 上是哪個後端的 `GET /api/admin/users`，是看兩邊的程式碼確認的（livefit 的 `SecurityConfig` matcher、Node 版 `backend/app.js` 的 404 handler），沒有實際打過。
+- 還沒有實際呼叫過這三個 subagent：`.claude/agents/` 是 session 中途建立的，要重開 session 才會載入。
+
+---
+
 ## 2026-10-21 — 加上 Spring Boot 版的 CI（只跑 `mvn test`）
 
 分支：`feature/livefit-ci`

@@ -156,6 +156,23 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - 每次都是全新的空資料庫，表由 `ddl-auto=update` 建立，裡面只會有 `AdminSeeder` 建的預設管理員。新寫的測試要自己建資料，不能假設資料庫裡原本就有東西。
 - 失敗時 surefire 報告會上傳成 artifact `surefire-reports`。
 
+### Subagent（`.claude/agents/`，僅 `livefit/`）
+
+三個專案層級的 subagent，為了 CHANGELOG 2026-10-21 CI 那筆「還沒做的」三項（CI 第二階段、Jackson 型別轉換、選用的架構調整）而建，檢查清單都是針對 `livefit/` 寫的。
+
+| Subagent | 負責 | 工具 | 呼叫時要給 |
+|---|---|---|---|
+| `security-reviewer` | 權限、身分驗證、輸入驗證、CI 機密 | `Read, Grep, Glob` | `git diff` 的內容或變更檔案清單 |
+| `code-reviewer` | 業務邏輯與邊界、是否符合 `docs/openapi.yaml`、測試有沒有被刪除 / 跳過 / 放寬 | `Read, Grep, Glob` | `git diff` 的內容或變更檔案清單，以及改動的目的（例如「重構，不應改變行為」） |
+| `test-runner` | 執行 `mvn test`、jest、Postman，只回報失敗項目、位置與可能原因 | `Bash, Read`，`model: haiku` | 要跑哪一套，或哪一個測試 |
+
+- 建議的順序：改完程式 → `test-runner` → 通過後把 diff 交給兩個 reviewer。兩個 reviewer 的範圍不重疊，可以同時跑。
+- **兩個 reviewer 自己跑不了 `git diff`**，沒附 diff 或檔案清單時會直接回報「缺少審查範圍」。不要為了讓它們能跑 git 而加上 `Bash`：本機的 Claude Code 在 macOS 上預設沒有 `Grep`、`Glob`，搜尋走 Bash；subagent 的 `tools` 列了這兩個而沒列 `Bash` 時才會單獨拿到它們。加上 `Bash` 之後這兩個工具會消失，reviewer 也就能透過 shell 改檔案了。
+- `test-runner` 有 Bash，「不改檔案、不起停後端與資料庫」是寫在 prompt 裡的規則，不是工具限制。前置條件不滿足時它只回報，不會自己處理。
+- `test-runner` 執行前會打 `GET /api/admin/users` 確認 8080 上是哪個後端：livefit 回 401 `請先登入`，Node 版沒有這條路由、回 404 `無此路由`。
+- 檢查清單裡的規則是從本檔抄過去的（四句錯誤訊息、上鎖順序、營收算法、測試的分工、帳號接管等）。**改了本檔的這些規則時，要同步改 `.claude/agents/` 裡對應的那一行**，否則 reviewer 會拿舊規則審查。
+- 改了 agent 檔案，下一次呼叫就會用新的內容，不需要重開 session。
+
 ### 報名的鎖與月營收的算法（僅 `livefit/`）
 
 - `CourseService.book` 進入後先鎖使用者、再鎖課程（`findByIdForUpdate`）。鎖使用者擋重複報名與堂數超扣，鎖課程擋超過名額。**順序固定是先使用者、後課程**，之後若有別的地方也要同時鎖這兩種資料列，必須用同樣的順序，否則會死結。
