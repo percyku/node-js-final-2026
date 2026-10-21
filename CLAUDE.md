@@ -146,6 +146,16 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - **營收金額不要連著真的資料庫測。** 均價是資料庫裡「所有」方案的 Σprice ÷ Σcredit_amount，別人建的方案也會算進去，所以金額只在 `CoachRevenueCalculationTest` 用假的 repository 驗。
 - 併發測試用 `@RepeatedTest`，只跑一次可能剛好通過。改 `book` 之後若偶爾失敗，那就是真的有競爭，不要當成不穩定的測試而忽略。
 
+### CI（僅 `livefit/`）
+
+`.github/workflows/livefit-test.yml` 在 GitHub Actions 上跑 `mvn test`。只跑 Java 測試、不啟動後端，jest 與 Postman 不在 CI 上。
+
+- 觸發條件：push 到 `springboot-backend`，或開 PR 到 `springboot-backend`，而且改到 `livefit/**` 或這個 workflow 檔。只改文件不會跑。沒有手動觸發，因為 `workflow_dispatch` 要求 workflow 檔在預設分支 `main` 上。
+- **這個檔案不要 merge 回 `main`**：`.github/` 是 README 宣告不可修改的目錄。`main` 上的 `test.yml` 是題目給的 Node 版驗收，不要動它。
+- CI 上沒有 `livefit/.env`。資料庫連線寫在 workflow 的 `env`，`JWT_SECRET` 每次執行用 `openssl rand -hex 32` 產生。**`application.properties` 新增沒有預設值的必填設定時，要同步加進 workflow**，否則 Spring context 起不來，連資料庫的測試會全部失敗。
+- 每次都是全新的空資料庫，表由 `ddl-auto=update` 建立，裡面只會有 `AdminSeeder` 建的預設管理員。新寫的測試要自己建資料，不能假設資料庫裡原本就有東西。
+- 失敗時 surefire 報告會上傳成 artifact `surefire-reports`。
+
 ### 報名的鎖與月營收的算法（僅 `livefit/`）
 
 - `CourseService.book` 進入後先鎖使用者、再鎖課程（`findByIdForUpdate`）。鎖使用者擋重複報名與堂數超扣，鎖課程擋超過名額。**順序固定是先使用者、後課程**，之後若有別的地方也要同時鎖這兩種資料列，必須用同樣的順序，否則會死結。

@@ -6,6 +6,58 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-21 — 加上 Spring Boot 版的 CI（只跑 `mvn test`）
+
+分支：`feature/livefit-ci`
+
+處理 2026-10-12 那筆「還沒做的」CI。第一版只跑 Java 測試，jest 與 Postman 要啟動後端，之後再決定要不要加。`livefit/` 的程式碼沒有改動。
+
+### 新增
+
+`.github/workflows/livefit-test.yml`：
+
+- 觸發：push 到 `springboot-backend`，或開 PR 到 `springboot-backend`，而且改到 `livefit/**` 或這個 workflow 檔。只改文件不會跑。
+- 沒有 `workflow_dispatch`：手動觸發要求 workflow 檔在預設分支 `main` 上，而這個檔案不會進 `main`。
+- postgres service 用與 compose 相同的 `postgres:16.4-alpine3.20`，`POSTGRES_DB` 直接設成 `livefit`。
+- JDK 21（temurin），`./mvnw -B -ntp test`，Maven 依賴用 `setup-java` 快取。
+- 資料庫連線寫在 workflow 的 `env`；`JWT_SECRET` 每次執行用 `openssl rand -hex 32` 產生並遮罩，不把密鑰寫進版本庫。第三方登入的變數都不設。
+- 失敗時把 `livefit/target/surefire-reports/` 上傳成 artifact `surefire-reports`。
+- 現有的 `test.yml` 沒有動。**這個 workflow 檔不要 merge 回 `main`**（`.github/` 是 README 宣告不可修改的目錄）。
+
+### 文件
+
+- `CLAUDE.md` 新增「CI（僅 `livefit/`）」一節。
+- `docs/springboot-migration-plan.md` §15 的表格補上 CI。
+
+### 驗證
+
+在本機模擬 CI 的條件：用 `git archive` 匯出乾淨的 `livefit/`（沒有 `.env`），新起一個空的 `postgres:16.4-alpine3.20`，只給 workflow 裡的那幾個環境變數與隨機的 `JWT_SECRET`。
+
+- `mvn test` 122 項通過。
+- 跑完後資料庫只剩 `AdminSeeder` 建的 `admin@gmail.com`，其他表都是空的：測試會清掉自己建的資料，也不依賴資料庫裡原本就有的資料。
+
+2026-10-12 那筆列出的待確認事項，目前的狀況：
+
+| 項目 | 結果 |
+|---|---|
+| 全新的空資料庫 | 本機模擬通過 |
+| 第三方登入不需要金鑰 | 本機模擬時這些變數都沒設，通過 |
+| `./mvnw` 在 Linux runner 上能不能用 | 本機模擬用的是快取裡的 Maven 3.9.16，**要等 GitHub 上第一次執行** |
+| 併發測試在 runner 上是否穩定、時區 | **要等 GitHub 上第一次執行** |
+| 跨年那一刻年份不一致 | 沒有處理，維持原本的判斷 |
+
+### 還沒做的
+
+- **在 GitHub 上實際跑一次。** 要先 push 這個分支並開 PR 到 `springboot-backend`，PR 會觸發 workflow。
+- **CI 第二階段**：在 CI 啟動 livefit，跑 jest 與 Postman。
+- **Jackson 會把字串與小數轉成整數。** `{"price": "10"}` 與 `{"price": 10.9}` 現在都被當成 `10` 接受，但 Node 版與 openapi 都要求回 400 `欄位未填寫正確`（例如「max_participants 非數字整數」）。`ValidUtils.isInteger` 的註解寫「字串數字視為不合法」，實際上沒有擋到。型別轉換發生在反序列化，比 service 的檢查還早，所以改用 `@Valid` 也擋不到。修法是在 `application.properties` 加上 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`。已用 Jackson 2.19.4 實測，加了之後這幾種輸入會改成丟例外，由現有的 `HttpMessageNotReadableException` handler 回 400。前端的數字欄位都用 `v-model.number`，GitHub、Facebook 回應的型別也和 record 的欄位一致，預期都不受影響。這是 HTTP 合約層的行為，驗證要加在 Postman。
+- **選用的架構調整，等 CI 上線後再做。** 檢視過 controller 與 service 的分工，結論是正確、維持現狀。驗證也繼續留在 service：錯誤訊息與檢查順序是合約，而且 `updatePassword` 的規則要看資料庫裡有沒有密碼，DTO 上的註解做不到。之後可以考慮的三點都在 service 層內部，而且不改變行為：
+  - 剩餘堂數「購買總堂數 − 未取消報名數」在 `CourseService.book` 與 `UserService.getBookings` 各算一次。
+  - `UserService.getBookings`、`getCreditPurchases` 屬於報名與方案，可以搬到 `CourseService`、`CreditPackageService`。
+  - `AdminUserService.resetAdminPassword` 只用到呼叫者的 id，卻收整個 `AuthUser`。
+
+---
+
 ## 2026-10-12 — 合併 Java 測試與 Postman Collection，新增 Postman Collection 的紀錄
 
 `feature/livefit-service-tests` 與 `feature/postman-collection` 都已 merge 回 `springboot-backend`（`61ab39a`、`3ecee7a`，沒有衝突，已 push 到 `origin/springboot-backend`）。下面兩筆 2026-10-12、2026-10-11 是前者的內容；後者原本沒有自己的紀錄，補在這裡。
