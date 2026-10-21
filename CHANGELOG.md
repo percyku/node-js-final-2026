@@ -42,13 +42,16 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 |---|---|
 | 全新的空資料庫 | 本機模擬通過 |
 | 第三方登入不需要金鑰 | 本機模擬時這些變數都沒設，通過 |
-| `./mvnw` 在 Linux runner 上能不能用 | 本機模擬用的是快取裡的 Maven 3.9.16，**要等 GitHub 上第一次執行** |
-| 併發測試在 runner 上是否穩定、時區 | **要等 GitHub 上第一次執行** |
+| `./mvnw` 在 Linux runner 上能不能用 | 能用，GitHub 上第一次執行就通過 |
+| 併發測試在 runner 上是否穩定、時區 | 第一次執行通過（`BookingConcurrencyTest` 15 項 4.9 秒）。只跑過一次，偶爾失敗時照 `CLAUDE.md` 的說明先查是不是真的有競爭 |
 | 跨年那一刻年份不一致 | 沒有處理，維持原本的判斷 |
+
+GitHub 上的第一次執行：PR #1 觸發，runner 是 `ubuntu-24.04`，122 項通過，整個 job 1 分 6 秒（其中 `mvn test` 39 秒）。
+
+GitHub 當時提示 `ubuntu-latest` 從 2026-10-19 起會陸續換成 Ubuntu 26。之後如果 CI 失敗但本機正常，先看 log 開頭的 `Image:` 是不是換了版本，必要時把 `runs-on` 固定成 `ubuntu-24.04`。
 
 ### 還沒做的
 
-- **在 GitHub 上實際跑一次。** 要先 push 這個分支並開 PR 到 `springboot-backend`，PR 會觸發 workflow。
 - **CI 第二階段**：在 CI 啟動 livefit，跑 jest 與 Postman。
 - **Jackson 會把字串與小數轉成整數。** `{"price": "10"}` 與 `{"price": 10.9}` 現在都被當成 `10` 接受，但 Node 版與 openapi 都要求回 400 `欄位未填寫正確`（例如「max_participants 非數字整數」）。`ValidUtils.isInteger` 的註解寫「字串數字視為不合法」，實際上沒有擋到。型別轉換發生在反序列化，比 service 的檢查還早，所以改用 `@Valid` 也擋不到。修法是在 `application.properties` 加上 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`。已用 Jackson 2.19.4 實測，加了之後這幾種輸入會改成丟例外，由現有的 `HttpMessageNotReadableException` handler 回 400。前端的數字欄位都用 `v-model.number`，GitHub、Facebook 回應的型別也和 record 的欄位一致，預期都不受影響。這是 HTTP 合約層的行為，驗證要加在 Postman。
 - **選用的架構調整，等 CI 上線後再做。** 檢視過 controller 與 service 的分工，結論是正確、維持現狀。驗證也繼續留在 service：錯誤訊息與檢查順序是合約，而且 `updatePassword` 的規則要看資料庫裡有沒有密碼，DTO 上的註解做不到。之後可以考慮的三點都在 service 層內部，而且不改變行為：
