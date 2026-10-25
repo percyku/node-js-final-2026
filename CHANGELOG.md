@@ -6,6 +6,24 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-25 — 依第一次使用的狀況調整 `test-runner`
+
+分支：`springboot-backend`
+
+處理下面那筆「還沒做的」第三項。`livefit/` 的程式碼沒有改動。
+
+`.claude/agents/test-runner.md`：
+
+- 連 localhost 與 Docker 的指令（`curl`、`docker ps`、`mvn test`、jest、Postman）一開始就用 `dangerouslyDisableSandbox: true`，不要先在沙盒內試。之前在 prompt 裡寫明了，它還是先在沙盒內跑了一次。
+- 權限確認回「暫時無法判斷」時，原樣重試一次就停下來回報。之前分類器沒有回應時，它連試了 4 次。
+- 呼叫者指定的 Postman 請求要存檔後用 grep 逐支列出結果，只看摘要不算確認過。
+- 寫明 Postman 重設的是它自己建立的管理員，不是 `admin@gmail.com`。之前它把兩者混為一談。
+- 用 `docker ps` 回報在線的 postgres 是哪個容器；呼叫者指定的容器不在線時不執行。
+
+`CLAUDE.md` 的「Subagent」一節補上這幾點。新的規則下一次呼叫時才會用到，目前還沒實際驗證過。
+
+---
+
 ## 2026-10-25 — 整數欄位不再接受字串與小數
 
 分支：`feature/jackson-strict-coercion`

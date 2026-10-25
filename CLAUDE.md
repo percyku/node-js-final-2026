@@ -169,7 +169,8 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - 建議的順序：改完程式 → `test-runner` → 通過後把 diff 交給兩個 reviewer。兩個 reviewer 的範圍不重疊，可以同時跑。
 - **兩個 reviewer 自己跑不了 `git diff`**，沒附 diff 或檔案清單時會直接回報「缺少審查範圍」。不要為了讓它們能跑 git 而加上 `Bash`：本機的 Claude Code 在 macOS 上預設沒有 `Grep`、`Glob`，搜尋走 Bash；subagent 的 `tools` 列了這兩個而沒列 `Bash` 時才會單獨拿到它們。加上 `Bash` 之後這兩個工具會消失，reviewer 也就能透過 shell 改檔案了。
 - `test-runner` 有 Bash，「不改檔案、不起停後端與資料庫」是寫在 prompt 裡的規則，不是工具限制。前置條件不滿足時它只回報，不會自己處理。
-- `test-runner` 執行前會打 `GET /api/admin/users` 確認 8080 上是哪個後端：livefit 回 401 `請先登入`，Node 版沒有這條路由、回 404 `無此路由`。
+- `test-runner` 執行前會打 `GET /api/admin/users` 確認 8080 上是哪個後端：livefit 回 401 `請先登入`，Node 版沒有這條路由、回 404 `無此路由`。也會用 `docker ps` 回報在線的 postgres 是哪個容器，呼叫時可以指定要哪一個。
+- `test-runner` 連 localhost 與 Docker 的指令一開始就跳出沙盒；權限確認沒有結果時只重試一次就回報。要確認特定的 Postman 請求時，在 prompt 裡寫出請求名稱，它會逐支列出結果，不只看摘要。
 - 檢查清單裡的規則是從本檔抄過去的（四句錯誤訊息、上鎖順序、營收算法、測試的分工、帳號接管等）。**改了本檔的這些規則時，要同步改 `.claude/agents/` 裡對應的那一行**，否則 reviewer 會拿舊規則審查。
 - 改了 agent 檔案，下一次呼叫就會用新的內容，不需要重開 session。
 

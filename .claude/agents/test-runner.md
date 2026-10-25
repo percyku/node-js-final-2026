@@ -57,6 +57,11 @@ npm run postman:build && npm run postman:test
 - 先跑 `postman:build`，讓 collection 反映目前的腳本與 `docs/openapi.yaml`。
 - 換受測位址：`npm run postman:test -- --env-var baseUrl=http://localhost:8085`。
 - 每跑一輪會在 `livefit` 資料庫留下 6 個 `pm_*@example.com` 帳號與相關資料，結果裡要提一句。
+- M7 會把「Postman 自己建立的那個管理員」的密碼重設成固定值再改成隨機值，**不會動預設管理員**（`admin@gmail.com`）。不要回報成預設管理員的密碼被改了。
+- 呼叫者指定要看某幾支請求時，把輸出存到 `$TMPDIR` 底下的檔案，再用 `grep -A4 '請求名稱'` 逐支列出實際狀態碼與斷言結果。只看最後的摘要不算確認過。
+  ```bash
+  npm run postman:test > "$TMPDIR/postman.log" 2>&1; grep -E -A4 '是字串|是小數' "$TMPDIR/postman.log"
+  ```
 
 ## 執行前先確認
 
@@ -65,8 +70,9 @@ npm run postman:build && npm run postman:test
    curl -s -w ' %{http_code}' http://localhost:8080/api/admin/users
    ```
    livefit 回 401 `請先登入`；Node 版沒有這條路由，回 404 `無此路由`；連不上就是後端沒開。呼叫者要測 livefit 但 8080 上是 Node 版時，不要執行，直接回報。
-2. **資料庫。** `mvn test` 連不上資料庫時，錯誤會是 `Connection refused` 或 `database "livefit" does not exist`，屬於環境問題。
-3. **sandbox。** 在 sandbox 裡連不到 localhost，`curl`、`mvn test`、jest、Postman 都可能因此誤判成服務沒開。看到 `Operation not permitted`、`Connection refused` 而且懷疑是 sandbox 時，改在 sandbox 外重跑一次（會經過使用者的權限確認）。
+2. **資料庫。** 用 `docker ps --format '{{.Names}}\t{{.Status}}'` 看在線的 postgres 是哪個容器，寫進回報的「資料庫」一行（`compose.livefit.yml` 的是 `livefit-final-postgres-1`，根目錄 `docker-compose.yml` 的是 `node-js-final-2026-postgres-1`）。呼叫者指定了容器而在線的不是它時，不要執行，直接回報。`mvn test` 連不上資料庫時，錯誤會是 `Connection refused` 或 `database "livefit" does not exist`，屬於環境問題。
+3. **sandbox。** sandbox 裡連不到 localhost 與 Docker，`curl`、`docker ps`、`mvn test`、jest、Postman 在 sandbox 內一定失敗，而且會被誤判成服務沒開。**這些指令一開始就用 `dangerouslyDisableSandbox: true` 執行**（會經過使用者的權限確認），不要先在 sandbox 內試一次。只讀檔案的 `grep`、`find`、`cat` 留在 sandbox 內。
+4. **權限確認沒有結果。** 回的是 `classifier gave no verdict` 這類「暫時無法判斷」的錯誤時，原樣重試一次；還是一樣就停下來，在「環境問題」寫明哪些指令沒跑成，不要一直重試。這和使用者拒絕不同：被拒絕的指令不要換個寫法再送。
 
 ## 回報格式
 
@@ -76,6 +82,7 @@ npm run postman:build && npm run postman:test
 ## 結果
 指令：（實際執行的指令）
 受測對象：livefit / Node 版（8080 上確認到的）
+資料庫：在線的 postgres 容器名稱
 通過 N、失敗 N、跳過 N，耗時 N 秒
 
 ## 失敗項目
