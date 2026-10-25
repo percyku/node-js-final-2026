@@ -1,11 +1,14 @@
 package com.percyku.livefit.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.config.GithubProperties;
 import com.percyku.livefit.entity.UserIdentity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.json.JsonTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -23,7 +26,12 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-/** GitHub 的回應用 MockRestServiceServer 假造，不會真的連線 */
+/**
+ * GitHub 的回應用 MockRestServiceServer 假造，不會真的連線。
+ * 用 Spring Boot 依 application.properties 建好的 ObjectMapper 解析，和正式環境注入的 RestClient.Builder 一樣，
+ * record 的欄位型別若與平台回應不符（例如嚴格的 Jackson 設定不肯把字串轉成數字）這裡就會失敗。
+ */
+@JsonTest
 class GithubOAuthClientTest {
 
     private static final String TOKEN_URI = "https://github.com/login/oauth/access_token";
@@ -31,12 +39,15 @@ class GithubOAuthClientTest {
     private static final String EMAILS_URI = "https://api.github.com/user/emails";
     private static final String REDIRECT_URI = "http://localhost:5173/oauth/callback/github";
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     private MockRestServiceServer server;
     private GithubOAuthClient client;
 
     @BeforeEach
     void setUp() {
-        RestClient.Builder builder = RestClient.builder();
+        RestClient.Builder builder = OAuthTestRestClients.builder(objectMapper);
         server = MockRestServiceServer.bindTo(builder).build();
         client = new GithubOAuthClient(properties("client-id", "client-secret"), builder.build());
     }
