@@ -2,7 +2,8 @@ name: livefit 測試
 
 # Spring Boot 版（livefit/）的測試，兩個 job 並行：
 #   - mvn test：Java 測試，不啟動後端
-#   - jest 與 Postman：啟動 livefit，跑根目錄的黑箱測試（M1 ~ M6）與 Postman Collection（M0 ~ M7、比對 openapi）
+#   - jest 與 Postman：啟動 livefit，跑根目錄的黑箱測試（M1 ~ M6 與 smoke）與 Postman Collection（M0 ~ M7、比對 openapi）
+# contract job 打包時用 -DskipTests，前提是 mvn test job 一直存在而且無條件執行；拿掉它或加上條件時要一起改。
 # 這個檔案只放在 springboot-backend 分支，不要 merge 回 main：
 # .github/ 是 README 宣告不可修改的目錄，main 上的 test.yml 是題目給的 Node 版驗收。
 # 沒有 workflow_dispatch：手動觸發要求 workflow 檔在預設分支（main）上，這裡用不到。
@@ -12,8 +13,10 @@ on:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "!livefit/**/*.md"
       - "test/**"
       - "postman/**"
+      - "!postman/**/*.md"
       # Postman 的 openapi 比對是從這份文件讀出來的
       - "docs/openapi.yaml"
       - "package.json"
@@ -23,8 +26,10 @@ on:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "!livefit/**/*.md"
       - "test/**"
       - "postman/**"
+      - "!postman/**/*.md"
       - "docs/openapi.yaml"
       - "package.json"
       - "package-lock.json"
@@ -33,6 +38,10 @@ on:
 concurrency:
   group: livefit-test-${{ github.ref }}
   cancel-in-progress: true
+
+# 兩個 job 都只需要讀程式碼。寫明唯讀，repo 的預設權限改成可寫時也不受影響
+permissions:
+  contents: read
 
 # CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡，兩個 job 共用。
 # 第三方登入的變數都不設：Java 測試把它們換成假的或不連外，Postman 只測連到平台之前就會擋下的失敗案例
@@ -68,6 +77,9 @@ jobs:
         working-directory: livefit
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 不把 GITHUB_TOKEN 留在工作目錄的 git 設定裡，之後的步驟（包括 npm 套件）讀不到
+          persist-credentials: false
 
       - uses: actions/setup-java@v5
         with:
@@ -116,6 +128,9 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 不把 GITHUB_TOKEN 留在工作目錄的 git 設定裡，之後的步驟（包括 npm 套件）讀不到
+          persist-credentials: false
 
       - uses: actions/setup-java@v5
         with:
@@ -130,23 +145,26 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: 產生這次執行用的 JWT_SECRET
-        run: |
-          secret=$(openssl rand -hex 32)
-          echo "::add-mask::$secret"
-          echo "JWT_SECRET=$secret" >> "$GITHUB_ENV"
-
       # 這個 job 只需要把服務跑起來，Java 測試由上面的 mvn test job 負責，所以打包時跳過
       - name: 打包 livefit
         working-directory: livefit
         run: ./mvnw -B -ntp -DskipTests package
 
+      # JWT_SECRET 只交給 java 行程，不寫進 GITHUB_ENV，npm 套件、jest、newman 的環境裡都沒有它
       - name: 啟動 livefit
         working-directory: livefit
         run: |
-          java -jar target/livefit-*.jar > "$RUNNER_TEMP/livefit.log" 2>&1 &
+          secret=$(openssl rand -hex 32)
+          echo "::add-mask::$secret"
+          JWT_SECRET="$secret" java -jar target/livefit-*.jar > "$RUNNER_TEMP/livefit.log" 2>&1 &
+          pid=$!
           for i in $(seq 1 45); do
-            if curl -sf "http://localhost:8080/healthcheck" > /dev/null; then
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "livefit 啟動失敗"
+              cat "$RUNNER_TEMP/livefit.log"
+              exit 1
+            fi
+            if curl -sf --max-time 3 "http://localhost:8080/healthcheck" > /dev/null; then
               echo "livefit 已就緒"
               exit 0
             fi
@@ -156,14 +174,19 @@ jobs:
           cat "$RUNNER_TEMP/livefit.log"
           exit 1
 
+      # newman 是 devDependency，整個相依樹由 package-lock.json 鎖住。
+      # 不執行安裝腳本：lockfile 裡唯一有安裝腳本的是 macOS 專用的 fsevents，Linux 上本來就不會裝
       - name: 安裝依賴
-        run: npm ci
+        id: deps
+        run: npm ci --ignore-scripts
 
-      - name: jest（M1 ~ M6）
+      - name: jest（M1 ~ M6 與 smoke）
         run: npm test
 
+      # jest 失敗也照跑，同一輪就看得到兩套的結果。job 仍然算失敗。
       # collection 不進版本庫，每次從 build-collection.js 與 docs/openapi.yaml 產生
       - name: Postman（M0 ~ M7）
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           npm run postman:build
           npm run postman:test
@@ -171,3 +194,12 @@ jobs:
       - name: 失敗時印出 livefit 的 log
         if: failure()
         run: tail -n 200 "$RUNNER_TEMP/livefit.log" || true
+
+      # 500 的 stack trace 很長，最後 200 行可能看不到前一套的錯誤，完整的 log 另外上傳
+      - name: 失敗時上傳 livefit 的 log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: livefit-log
+          path: ${{ runner.temp }}/livefit.log
+          if-no-files-found: ignore
