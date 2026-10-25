@@ -105,6 +105,7 @@ jobs:
         with:
           name: surefire-reports
           path: livefit/target/surefire-reports/
+          overwrite: true
 
   contract:
     name: jest 與 Postman
@@ -189,17 +190,20 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           npm run postman:build
-          npm run postman:test
+          npm run postman:test -- --timeout-request 10000
 
+      # 逾時或被取消時也執行，不然卡住的那一輪看不到 log
       - name: 失敗時印出 livefit 的 log
-        if: failure()
+        if: failure() || cancelled()
         run: tail -n 200 "$RUNNER_TEMP/livefit.log" || true
 
       # 500 的 stack trace 很長，最後 200 行可能看不到前一套的錯誤，完整的 log 另外上傳
       - name: 失敗時上傳 livefit 的 log
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: livefit-log
           path: ${{ runner.temp }}/livefit.log
           if-no-files-found: ignore
+          # 重跑失敗的 job 時同名 artifact 已存在
+          overwrite: true
