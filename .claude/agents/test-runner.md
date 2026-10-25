@@ -44,7 +44,9 @@ API_BASE_URL=http://localhost:8080 npx jest test/m5.test.js --runInBand
 API_BASE_URL=http://localhost:8080 npx jest test/m5.test.js --runInBand -t "報名"
 ```
 
-全部跑用 `npm test`（68 項），單一里程碑用 `npm run test:m1` ~ `test:m6`。
+全部跑用 `npm test`（68 項，含 `test/smoke.test.js` 的 4 項），單一里程碑用 `npm run test:m1` ~ `test:m6`。
+
+CI 的 `contract` job 跑的是同樣的 `npm test` 與 `postman:build`、`postman:test`。CI 失敗而本機通過時，回報裡提一句兩邊的資料庫不同：CI 是全新的資料庫加上 jest 的資料。
 
 ### Postman Collection（`postman/`）
 
@@ -55,6 +57,7 @@ npm run postman:build && npm run postman:test
 ```
 
 - 先跑 `postman:build`，讓 collection 反映目前的腳本與 `docs/openapi.yaml`。
+- `postman:test` 用的是 devDependency 裝在 `node_modules/.bin/newman` 的 newman。回 `newman: command not found` 時寫進「環境問題」，請呼叫者在根目錄 `npm install`，不要自己裝。
 - 換受測位址：`npm run postman:test -- --env-var baseUrl=http://localhost:8085`。
 - 每跑一輪會在 `livefit` 資料庫留下 6 個 `pm_*@example.com` 帳號與相關資料，結果裡要提一句。
 - M7 會把「Postman 自己建立的那個管理員」的密碼重設成固定值再改成隨機值，**不會動預設管理員**（`admin@gmail.com`）。不要回報成預設管理員的密碼被改了。

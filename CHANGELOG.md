@@ -6,6 +6,59 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-25 — CI 第二階段：在 CI 上跑 jest 與 Postman
+
+分支：`feature/livefit-ci-stage2`（PR #2）
+
+處理 2026-10-21 CI 那筆「還沒做的」第一項。`livefit/` 的主程式沒有改動。
+
+### 新增
+
+`.github/workflows/livefit-test.yml` 新增 `contract` job（「jest 與 Postman」），和原本的 `mvn test` 並行：
+
+- 用自己的空 postgres，`-DskipTests package` 打包後在背景啟動 livefit，等 `/healthcheck` 就緒（發現 java 已結束就停，`curl` 有逾時）。
+- 跑 `npm test`（jest 68 項，含 smoke 4 項）與 `postman:build`、`postman:test`（168 支請求）。jest 失敗時 Postman 照跑，同一輪看得到兩套的結果。
+- 失敗、逾時或被取消時，印出 livefit log 的最後 200 行，完整的 log 上傳成 artifact `livefit-log`。
+- `-DskipTests` 是刻意的：Java 測試由 `mvn test` job 負責。前提是 `mvn test` job 一直存在而且無條件執行。
+
+其他改動：
+
+- 觸發路徑加上 `test/**`、`postman/**`、`docs/openapi.yaml`、`package.json`、`package-lock.json`；`livefit/`、`postman/` 底下的 `.md` 排除。
+- DB 連線的 `env` 從 job 層移到 workflow 層，兩個 job 共用。
+
+### 安全設定（`security-reviewer` 提出）
+
+- newman 從 `npx --yes newman` 改成 devDependency `6.2.3`（不加 `^`），整個相依樹由 `package-lock.json` 鎖住。CI 用 `npm ci --ignore-scripts`（lockfile 裡唯一有安裝腳本的是 macOS 專用的 `fsevents`）。
+- workflow 寫明 `permissions: contents: read`；checkout 用 `persist-credentials: false`。repo 目前的預設權限本來就是唯讀，這是讓設定改了也不受影響。
+- `contract` job 的 `JWT_SECRET` 只交給 java 行程，不寫進 `GITHUB_ENV`。
+- 加入 newman 後 `npm audit` 從 6 個漏洞變成 24 個（含 1 個 critical：handlebars），全在 newman 的相依樹，用 `npx` 時其實是同一批、只是看不到。`npm audit --omit=dev` 是 0。newman 6.2.3 是最新版，只跑自己的 collection、只連本機時風險很低，接受；前提寫在 `security-reviewer.md`。
+
+### 審查意見的其他處理（`code-reviewer` 提出）
+
+- 上傳 artifact 加 `overwrite: true`（重跑失敗的 job 時不會撞名）；CI 上的 Postman 每支請求最多等 10 秒（`--timeout-request 10000`）。
+- 沒做：Maven wrapper 的 `distributionSha256Sum`（既有問題，選做）；`SERVER_ADDRESS=127.0.0.1`（Node 解析 `localhost` 可能先拿到 `::1`，jest 與 newman 會連不上）；隨機的 `ADMIN_PASSWORD`（帳密本來就公開在版本庫，runner 是拋棄式的）。
+
+### 文件
+
+- `CLAUDE.md`：「CI」一節改寫（兩個 job 的表格、觸發路徑、env、資料庫、`-DskipTests` 的前提、安全設定、CI 與本機結果不同時怎麼查）；「Postman」補 newman 與 `npm audit`；「測試的分工」註明三套都在 CI 上跑；Jackson 一節改寫兩支 Java 測試的理由；「注意事項」補 newman 與 `package-lock.json` 不要 merge 回 `main`。
+- `.claude/agents/`：`code-reviewer.md` 的 workflow 規則加上三個例外與新的回報情況；`security-reviewer.md` 的「CI 與機密」改成現在式並補上安全設定、Maven 快取、`npm audit` 的前提；`test-runner.md` 補 smoke、CI 的說明與找不到 newman 時的處理。
+- `docs/springboot-migration-plan.md` §15、`postman/README.md`（`npm ci`、CI 也會跑）、`build-collection.js` 與 `JacksonCoercionTest` 的註解。
+
+### 驗證
+
+- PR #2 第一次推上去就通過：`mvn test` 128 項（1 分 12 秒），`jest 與 Postman`：jest 68 項、Postman 168 支請求 481 項斷言（1 分 20 秒）。runner 是 `ubuntu-24.04`。
+- 加固後再推一次也通過：`npm ci --ignore-scripts` 裝了 433 個套件，用的是 lockfile 裡的 newman。
+- **「jest 失敗時 Postman 照跑」沒有在 CI 上實際觸發過**：要觸發得改壞 `test/`，那是不可修改的目錄。運算式由 `code-reviewer` 依 GitHub Actions 的語意逐一確認過。逾時、取消時的診斷步驟也沒有實際觸發過。
+- 兩個 reviewer 各審兩輪（`security-reviewer` 第二輪曾因 rate limit 中斷，之後接著審完），最後都沒有高、中嚴重度的問題。
+
+### 還沒做的
+
+- **branch protection**：`springboot-backend` 沒有設保護規則，CI 失敗時仍然可以 merge，`-DskipTests` 的前提也只靠 workflow 本身維持。建議在 GitHub 的 Settings → Branches 把 `mvn test` 與 `jest 與 Postman` 兩個 check 設成必要檢查（只能由使用者設定）。
+- **選用的架構調整**：同 2026-10-21 CI 那筆。
+- 用 GitHub、Facebook 實際登入一次，記下平台的回應（同上一筆）。
+
+---
+
 ## 2026-10-25 — 字串欄位不再接受數字與布林
 
 分支：`feature/jackson-strict-string`

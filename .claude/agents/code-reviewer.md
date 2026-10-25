@@ -48,7 +48,7 @@ tools: Read, Grep, Glob
 - 根目錄 `test/`（jest）：**這個目錄是題目給的、不可修改**，有任何改動都要回報。
 - `postman/build-collection.js`：刪掉請求、刪掉或放寬斷言、關掉 `[openapi]` 驗證、`MSG` 與 `ErrorMessages.java` 不一致。
 - `pom.xml`：surefire 的 `excludes`、`skipTests`、`testFailureIgnore`。
-- `.github/workflows/livefit-test.yml`：`-DskipTests`、`-Dmaven.test.skip`、`-Dtest=` 只挑部分測試、`continue-on-error: true`、`|| true`、`if: false`、`paths` 被縮小到改 `livefit/` 也不會觸發。
+- `.github/workflows/livefit-test.yml`：`-DskipTests`、`-Dmaven.test.skip`、`-Dtest=` 只挑部分測試、`continue-on-error: true`、`|| true`、`if: false`、`paths` 被縮小。例外有三個：`contract` job 打包時的 `-DskipTests` 是允許的，前提是 `mvn test` job 仍然存在而且無條件執行；`|| true` 只允許出現在失敗時才執行的診斷步驟；Postman 步驟的 `if: ${{ !cancelled() && steps.deps.outcome == 'success' }}` 是刻意的（jest 失敗時 Postman 照跑），改成會讓 Postman 不跑的條件才回報。另外要回報：`mvn test` job 被刪掉或加上條件；`contract` job 的 jest、Postman 步驟被刪掉、加上條件，或 `postman:build` 被拿掉；`paths` 少了 `livefit/**`、`test/**`、`postman/**`、`docs/openapi.yaml`、`package*.json` 任何一個。
 
 ### 測試的分工
 
@@ -59,7 +59,7 @@ tools: Read, Grep, Glob
 - 營收金額不要連著真的資料庫測，只在 `CoachRevenueCalculationTest` 用假的 repository 驗。
 - 新寫的 Java 測試要自己建資料，不能假設資料庫裡原本就有東西（CI 每次都是空的資料庫）。
 - 新增的行為改動有沒有對應的測試；HTTP 合約層的改動（例如 Jackson 型別轉換回 400）要驗在 Postman。
-- 設定有沒有生效可以寫 Java 測試（例如 `JacksonCoercionTest` 用 `@JsonTest` 驗設定內容、`JacksonConfigWiringTest` 用 `@SpringBootTest` 驗 Spring MVC 實際用的 mapper）：CI 只跑 `mvn test`，設定被拿掉時只有它擋得下來。這不算重複 Postman，前提是不打 API、不比對錯誤訊息。
+- 設定有沒有生效可以寫 Java 測試（例如 `JacksonCoercionTest` 用 `@JsonTest` 驗設定內容、`JacksonConfigWiringTest` 用 `@SpringBootTest` 驗 Spring MVC 實際用的 mapper）：在 `mvn test` 就能直接指出是哪個設定被拿掉，不用從 Postman 的 400 斷言反推。這不算重複 Postman，前提是不打 API、不比對錯誤訊息。
 
 ### 不能 merge 回 `main` 的檔案
 

@@ -23,8 +23,11 @@ npm run postman:build
 **命令列**：
 
 ```bash
+npm ci               # 第一次要先裝；newman 是 devDependency，版本由 package-lock.json 鎖住
 npm run postman:test
 ```
+
+CI 的 `contract` job 每次也會跑 `postman:build` 與 `postman:test`（見根目錄 `CLAUDE.md` 的「CI」）。
 
 ## 變數
 

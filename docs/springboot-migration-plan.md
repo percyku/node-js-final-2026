@@ -882,10 +882,10 @@ Spring Boot 版有三套測試，各自負責的範圍與寫 Java 測試的注�
 
 | 測試 | 位置 | 執行 |
 |---|---|---|
-| jest 黑箱測試（題目給的，M1 ~ M6） | 根目錄 `test/` | `npm test`，需要後端在線 |
-| Postman Collection（M0 ~ M7 與 openapi 比對） | `postman/` | `npm run postman:build` 後 `npm run postman:test`，需要後端在線 |
+| jest 黑箱測試（題目給的，M1 ~ M6） | 根目錄 `test/` | `npm test`，需要後端在線；CI 會自動執行 |
+| Postman Collection（M0 ~ M7 與 openapi 比對） | `postman/` | `npm run postman:build` 後 `npm run postman:test`，需要後端在線；CI 會自動執行 |
 | Java 測試 | `livefit/src/test/` | `cd livefit && mvn test`，需要資料庫在線，不需要啟動後端；push 或開 PR 到 `springboot-backend` 時由 CI 自動執行 |
 
 - Postman 的兩個 JSON 由 `postman/build-collection.js` 產生，不進版本庫。
-- 根目錄 `package.json` 為了 Postman 加了 `postman:build`、`postman:test` 兩個指令，這個改動不要 merge 回 `main`。
-- CI 只跑 Java 測試，workflow 是 `.github/workflows/livefit-test.yml`，同樣不要 merge 回 `main`。觸發條件與環境變數的說明在 `CLAUDE.md` 的「CI」，加入的經過在 `CHANGELOG.md` 2026-10-21 那一筆。
+- 根目錄 `package.json` 為了 Postman 加了 `postman:build`、`postman:test` 兩個指令與 newman 這個 devDependency，`package-lock.json` 也跟著變，這些改動不要 merge 回 `main`。
+- CI 的 workflow 是 `.github/workflows/livefit-test.yml`，同樣不要 merge 回 `main`。兩個並行的 job：`mvn test` 跑 Java 測試；`contract` 啟動 livefit 跑 jest 與 Postman。觸發條件與環境變數的說明在 `CLAUDE.md` 的「CI」，加入的經過在 `CHANGELOG.md` 2026-10-21（第一階段）與 2026-10-25（第二階段）。

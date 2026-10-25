@@ -53,7 +53,11 @@ tools: Read, Grep, Glob
 - 不能用 `pull_request_target`，也不能讓 PR 的程式碼拿到 secrets。
 - `run:` 裡不能 `echo` 或 `cat` 出密鑰、`.env` 或含密鑰的設定；上傳的 artifact 不能包含 `.env` 或含密鑰的 log。
 - 第三方 action 的版本要固定（`@v4`、`@v5` 或 commit SHA），不能用 `@main`。
-- CI 第二階段若在 runner 上啟動 livefit：預設管理員 `admin@gmail.com` / `Admin123` 只在拋棄式環境可以接受，檢查 port 沒有對外、job 結束後環境會銷毀。
+- `contract` job 在 runner 上啟動 livefit，Postman 用預設管理員 `admin@gmail.com` / `Admin123`。這只在 GitHub 提供的拋棄式 runner 上可以接受：改用自架 runner，或加入 tmate、ngrok 這類開對外通道的步驟時要回報。
+- workflow 要維持 `permissions: contents: read`、checkout 的 `persist-credentials: false`、`npm ci --ignore-scripts`；`JWT_SECRET` 在 `contract` job 只交給 java 行程。失敗時上傳的 `livefit-log` artifact 不能含密鑰：CI 不設第三方登入的變數，所以 Facebook 換 token 的網址（密鑰在 query string）不會出現；若以後在 CI 設了這些變數要重新檢查。
+- newman 由 lockfile 鎖住版本，不要改回 `npx --yes newman`（每次下載、相依樹不受控）。改回不鎖版本或拿掉 `--ignore-scripts` 時，也要重新評估 `contract` job 的 Maven 快取：快取在 npm 程式跑過之後才儲存，被竄改的套件可以改掉本機快取裡的 jar。
+- `mvn test` job 的 `JWT_SECRET` 經過 `GITHUB_ENV`，`::add-mask::` 不能拿掉：之後每個步驟的 log 開頭都會列出它。artifact 不經過遮罩，公開 repo 登入的人都能下載，所以上傳的檔案不能含密鑰。
+- `npm audit` 報的漏洞（含 handlebars 的 critical）全在 newman 的相依樹，`npm audit --omit=dev` 是 0。接受的前提是：只跑自己產生的 collection、只連本機的 livefit。以下情況要重新評估：執行別人的 collection 或資料檔、`baseUrl` 指向不受信任的主機、加上 `pm.sendRequest` 連外、使用 `pm.visualizer` 或 html reporter。不要用 `npm audit fix --force`，也不要把 `npm audit` 當成 CI 的關卡。
 
 ## 回報格式
 
