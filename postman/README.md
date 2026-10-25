@@ -1,6 +1,6 @@
 # LiveFit 的 Postman Collection
 
-對 `livefit/`（Spring Boot 版）的端到端合約測試：158 支請求、451 個斷言，涵蓋 M0 ~ M7 與第三方登入的失敗案例。Node 版沒有 M7 與第三方登入，不適用。
+對 `livefit/`（Spring Boot 版）的端到端合約測試：164 支請求、469 個斷言，涵蓋 M0 ~ M7 與第三方登入的失敗案例。Node 版沒有 M7 與第三方登入，不適用。
 
 | 檔案 | 用途 |
 |---|---|

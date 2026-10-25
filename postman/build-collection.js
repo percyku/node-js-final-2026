@@ -324,6 +324,15 @@ const m1 = folder('M0-M1 健康檢查、技能與方案', '全部免登入。建
     body: { credit_amount: 7, price: 1400 },
     tests: fail(400, MSG.invalidFields),
   }),
+  // 整數欄位送字串或小數要擋下來，不能被 Jackson 轉成整數收下（application.properties 的兩個 Jackson 設定）
+  post('新增方案：price 是字串', '/api/credit-package', {
+    body: { name: '字串價格_{{runId}}', credit_amount: 7, price: '1400' },
+    tests: fail(400, MSG.invalidFields),
+  }),
+  post('新增方案：credit_amount 是小數', '/api/credit-package', {
+    body: { name: '小數堂數_{{runId}}', credit_amount: 7.5, price: 1400 },
+    tests: fail(400, MSG.invalidFields),
+  }),
   post('新增暫時的方案（等一下刪掉）', '/api/credit-package', {
     body: { name: '暫時方案_{{runId}}', credit_amount: 1, price: 100 },
     tests: [...ok(), ...save('tempPackageId', 'json.data && json.data.id')],
@@ -542,6 +551,11 @@ const m3 = folder(
       body: { experience_years: 0, description: '年資 0' },
       tests: fail(400, MSG.invalidFields),
     }),
+    // 要排在「升級教練 A」之前：被當成 3 收下的話，教練 A 會在這裡就被升級
+    post('升級教練：年資是字串', '/api/admin/coaches/{{coachUserId}}', {
+      body: { experience_years: '3', description: '字串年資' },
+      tests: fail(400, MSG.invalidFields),
+    }),
     post('升級教練：userId 不存在', `/api/admin/coaches/${FAKE_UUID}`, {
       body: { experience_years: 3, description: '查無此人' },
       tests: fail(400, MSG.userNotFound),
@@ -620,6 +634,16 @@ const m3 = folder(
       },
       tests: fail(400, MSG.invalidFields),
     }),
+    put('更新教練資料：年資是小數', '/api/admin/coaches', {
+      auth: 'coachToken',
+      body: {
+        experience_years: 2.5,
+        description: '其他欄位都合法，只有年資是小數',
+        profile_image_url: 'https://example.com/avatar.png',
+        skill_ids: ['{{skillId}}'],
+      },
+      tests: fail(400, MSG.invalidFields),
+    }),
     post('開課', '/api/admin/coaches/courses', {
       auth: 'coachToken',
       body: courseBody(),
@@ -645,6 +669,16 @@ const m3 = folder(
     post('開課：meeting_url 不是 https', '/api/admin/coaches/courses', {
       auth: 'coachToken',
       body: courseBody({ name: '不安全連結_{{runId}}', meeting_url: 'http://example.com/meeting' }),
+      tests: fail(400, MSG.invalidFields),
+    }),
+    post('開課：max_participants 是字串', '/api/admin/coaches/courses', {
+      auth: 'coachToken',
+      body: courseBody({ name: '字串名額_{{runId}}', max_participants: '10' }),
+      tests: fail(400, MSG.invalidFields),
+    }),
+    post('開課：max_participants 是小數', '/api/admin/coaches/courses', {
+      auth: 'coachToken',
+      body: courseBody({ name: '小數名額_{{runId}}', max_participants: 10.5 }),
       tests: fail(400, MSG.invalidFields),
     }),
     post('開課：一般會員不能開課', '/api/admin/coaches/courses', {

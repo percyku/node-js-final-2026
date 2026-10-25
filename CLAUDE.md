@@ -133,7 +133,7 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 |---|---|---|---|
 | jest 黑箱測試 | 根目錄 `test/` | M1 ~ M6 的作業驗收合約。題目給的，不動 | 後端在線 |
 | Postman Collection | `postman/` | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml` | 後端與資料庫在線 |
-| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管 | 多數要資料庫在線，不需要啟動後端 |
+| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管；還有 CI 必須擋下的設定（例如 Jackson 型別轉換，CI 不跑 Postman） | 多數要資料庫在線，不需要啟動後端 |
 
 - **不要在 Java 用 MockMvc 把 M1 ~ M6 的「打 API 看狀態碼與訊息」再寫一遍**，那和 jest、Postman 重複。
 - **不要在根目錄 `test/` 加 M7 的 jest 測試**：Node 版沒有 M7，加了之後 `npm test` 對 Node 後端會失敗。
@@ -141,7 +141,7 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 
 寫 Java 測試要注意的事：
 
-- **連的是開發用的 `livefit` 資料庫，不是另外的測試資料庫。** 每個測試都要在 `@AfterEach` 呼叫 `fixtures.cleanUp()`；新增會建資料的 helper 時，要把 id 記進 `BookingFixtures` 的清單並在 `cleanUp` 依外鍵順序刪。測試建的資料 Email 是 `svc-test-*@example.com`、名稱以「測試」開頭，中斷後有殘留可以用這個找。
+- **連的是開發用的 `livefit` 資料庫，不是另外的測試資料庫。** 會寫入資料庫的測試都要在 `@AfterEach` 呼叫 `fixtures.cleanUp()`（`@JsonTest` 與只用假 repository 的測試不需要）；新增會建資料的 helper 時，要把 id 記進 `BookingFixtures` 的清單並在 `cleanUp` 依外鍵順序刪。測試建的資料 Email 是 `svc-test-*@example.com`、名稱以「測試」開頭，中斷後有殘留可以用這個找。
 - **後端沒有可替換的時鐘，都是直接呼叫 `Instant.now()`。** 要測「報名發生在某個時間點」只能事後用 SQL 改 `course_booking.created_at`。欄位是 `timestamp without time zone`、內容是 UTC，要用 `CAST(? AS timestamp)` 搭配字串，不要傳 `Timestamp` 物件（JDBC 會依 JVM 時區換算）。
 - **營收金額不要連著真的資料庫測。** 均價是資料庫裡「所有」方案的 Σprice ÷ Σcredit_amount，別人建的方案也會算進去，所以金額只在 `CoachRevenueCalculationTest` 用假的 repository 驗。
 - 併發測試用 `@RepeatedTest`，只跑一次可能剛好通過。改 `book` 之後若偶爾失敗，那就是真的有競爭，不要當成不穩定的測試而忽略。
@@ -211,6 +211,18 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 2. **matcher 順序有陷阱**：`POST /api/admin/coaches/courses`（建立課程，需教練）與 `POST /api/admin/coaches/{userId}`（升級教練，免登入）路徑形狀相同，前者必須排在前面。Controller 端由 Spring MVC 字面路徑優先解析，不受影響，但 Security 是依序比對。
 
 其他對齊 Node 行為的地方：教練端點權限不足回 **401 而非 403**（`使用者尚未成為教練`）；JWT 驗證後仍回 DB 撈 user，**角色以 DB 當下的 `role` 為準**，不信任 token 內的 role。
+
+### 整數欄位不接受字串與小數（僅 `livefit/`）
+
+`price`、`credit_amount`、`experience_years`、`max_participants` 送 `"10"` 或 `10.9` 要回 400 `欄位未填寫正確`。這是靠 `application.properties` 的 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`，在反序列化時就擋下；`ValidUtils.isInteger` 只檢查有沒有值。**這兩行不要拿掉**，拿掉後不會報錯，而是又把字串與小數轉成整數收下。
+
+- 兩行都要：只關第一行的話，小數轉整數仍由第二行決定，`10.9` 會被截成 `10`。
+- `10.0`、`1e1` 也會被擋，Node 版會收（差異記在 `docs/springboot-migration-plan.md` §8）。
+- 這兩個設定也套用到 GitHub、Facebook 回應的解析（`RestClient.Builder` 是 Spring 注入的）。`GithubOAuthClientTest`、`FacebookOAuthClientTest` 用 `@JsonTest` 注入的 `ObjectMapper` 解析假回應（`OAuthTestRestClients.builder`，換不到 converter 時會直接失敗），**假回應的型別要照平台實際回傳的寫**，record 型別不符時這兩個測試會失敗。
+- 前端送整數欄位要送 JSON 數字（`v-model.number` 或自行轉換）。`<select>` 的值、沒加 `.number` 的輸入框送出的是字串，會回 400；改設定以前這種輸入會被默默收下。
+- 新增 `Integer` 欄位的 request DTO 時，在 Postman 補「送字串」「送小數」回 400 的案例。HTTP 層由 Postman 驗；`JacksonCoercionTest` 只驗設定有沒有生效，讓只跑 `mvn test` 的 CI 也抓得到。
+- 升級到 Boot 4 / Jackson 3 時，**先把 `JacksonCoercionTest` 改成驗 Spring MVC 實際使用的 mapper 再跑**：它注入的是 Jackson 2 的 `com.fasterxml` `ObjectMapper`，若升級後 MVC 改用 Jackson 3、context 裡又還留著一個 Jackson 2 的 bean，它會驗錯對象而照樣通過。
+- 反方向還沒處理：數字送進字串欄位（`{"name": 123}`）會被轉成 `"123"` 收下，Node 版回 400。
 
 ### ADMIN 角色與 M7 管理員後台（僅 `livefit/`）
 

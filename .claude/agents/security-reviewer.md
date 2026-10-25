@@ -37,10 +37,11 @@ tools: Read, Grep, Glob
 
 ### 輸入驗證
 
-- **Jackson 的型別轉換**：`{"price": "10"}`、`{"price": 10.9}` 目前會被當成 `10` 接受（2026-10-21 CHANGELOG「還沒做的」）。改這塊時確認：
+- **Jackson 的型別轉換**：整數欄位送 `{"price": "10"}`、`{"price": 10.9}` 要回 400，靠 `application.properties` 的 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`（2026-10-25 加上）。**這兩行不能拿掉**，拿掉後字串與小數會被默默轉成整數收下。改到 Jackson 設定、`GlobalExceptionHandler` 或 OAuth client 的 record 時確認：
   - `HttpMessageNotReadableException` 回 400 `欄位未填寫正確`，回應裡**不能帶出 Jackson 的原始訊息**（含類別名稱、欄位路徑等內部資訊）。
   - 其他反序列化例外（例如 `MismatchedInputException` 被包在別的例外裡）不會掉到 500。
-  - `spring.jackson.*` 會套用到 Spring 管理的 `ObjectMapper`。`GithubOAuthClient`、`FacebookOAuthClient` 用的是 Spring 注入的 `RestClient.Builder`，解析平台回應時也會套用同樣的規則。檢查兩者 record 的欄位型別和平台實際回傳的型別一致，不一致時登入會變成失敗。
+  - `spring.jackson.*` 會套用到 Spring 管理的 `ObjectMapper`。`GithubOAuthClient`、`FacebookOAuthClient` 用的是 Spring 注入的 `RestClient.Builder`，解析平台回應時也會套用同樣的規則。檢查兩者 record 的欄位型別和平台實際回傳的型別一致，不一致時登入會變成失敗。`GithubOAuthClientTest`、`FacebookOAuthClientTest` 用 `@JsonTest` 注入的 `ObjectMapper` 解析假回應，假回應的型別要照平台實際回傳的寫，不能為了讓測試通過改成配合 record。
+  - 數字送進 `String` 欄位（`{"name": 123}`）仍會被轉成 `"123"` 收下，這是還沒處理的已知落差，不必每次回報。
 - `ValidUtils` 與 service 裡的檢查：負數、0、超大整數（`int` 溢位）、空字串與純空白、超長字串、路徑上的 UUID 格式錯誤。這些都應該回 400，不能變成 500。
 - 自訂查詢（`@Query`、`LIKE`）有沒有字串拼接；`keyword` 搜尋的 `%`、`_` 是否會讓使用者控制比對範圍。
 - `GlobalExceptionHandler` 的兜底 handler 不能把例外訊息或 stack trace 回給客戶端。
