@@ -1,6 +1,8 @@
 name: livefit 測試
 
-# Spring Boot 版（livefit/）的 Java 測試，只跑 mvn test，不啟動後端。
+# Spring Boot 版（livefit/）的測試，兩個 job 並行：
+#   - mvn test：Java 測試，不啟動後端
+#   - jest 與 Postman：啟動 livefit，跑根目錄的黑箱測試（M1 ~ M6）與 Postman Collection（M0 ~ M7、比對 openapi）
 # 這個檔案只放在 springboot-backend 分支，不要 merge 回 main：
 # .github/ 是 README 宣告不可修改的目錄，main 上的 test.yml 是題目給的 Node 版驗收。
 # 沒有 workflow_dispatch：手動觸發要求 workflow 檔在預設分支（main）上，這裡用不到。
@@ -10,16 +12,36 @@ on:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "test/**"
+      - "postman/**"
+      # Postman 的 openapi 比對是從這份文件讀出來的
+      - "docs/openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/livefit-test.yml"
   pull_request:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "test/**"
+      - "postman/**"
+      - "docs/openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/livefit-test.yml"
 
 concurrency:
   group: livefit-test-${{ github.ref }}
   cancel-in-progress: true
+
+# CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡，兩個 job 共用。
+# 第三方登入的變數都不設：Java 測試把它們換成假的或不連外，Postman 只測連到平台之前就會擋下的失敗案例
+env:
+  DB_HOST: localhost
+  DB_PORT: 5432
+  DB_USERNAME: student
+  DB_PASSWORD: student666
+  DB_DATABASE: livefit
 
 jobs:
   test:
@@ -41,14 +63,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-    # CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡。
-    # 第三方登入的測試都換成假的或不連外，GOOGLE_CLIENT_ID 等變數留空即可
-    env:
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_USERNAME: student
-      DB_PASSWORD: student666
-      DB_DATABASE: livefit
     defaults:
       run:
         working-directory: livefit
@@ -79,3 +93,81 @@ jobs:
         with:
           name: surefire-reports
           path: livefit/target/surefire-reports/
+
+  contract:
+    name: jest 與 Postman
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 和 mvn test 各用各的 postgres，資料不會互相影響。
+    # jest 與 Postman 都會自己建需要的資料；M7 用的預設管理員由 AdminSeeder 在啟動時建立（admin@gmail.com / Admin123）
+    services:
+      postgres:
+        image: postgres:16.4-alpine3.20
+        env:
+          POSTGRES_USER: student
+          POSTGRES_PASSWORD: student666
+          POSTGRES_DB: livefit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U student -d livefit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: livefit/pom.xml
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: 產生這次執行用的 JWT_SECRET
+        run: |
+          secret=$(openssl rand -hex 32)
+          echo "::add-mask::$secret"
+          echo "JWT_SECRET=$secret" >> "$GITHUB_ENV"
+
+      # 這個 job 只需要把服務跑起來，Java 測試由上面的 mvn test job 負責，所以打包時跳過
+      - name: 打包 livefit
+        working-directory: livefit
+        run: ./mvnw -B -ntp -DskipTests package
+
+      - name: 啟動 livefit
+        working-directory: livefit
+        run: |
+          java -jar target/livefit-*.jar > "$RUNNER_TEMP/livefit.log" 2>&1 &
+          for i in $(seq 1 45); do
+            if curl -sf "http://localhost:8080/healthcheck" > /dev/null; then
+              echo "livefit 已就緒"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "等了 90 秒 livefit 還沒就緒"
+          cat "$RUNNER_TEMP/livefit.log"
+          exit 1
+
+      - name: 安裝依賴
+        run: npm ci
+
+      - name: jest（M1 ~ M6）
+        run: npm test
+
+      # collection 不進版本庫，每次從 build-collection.js 與 docs/openapi.yaml 產生
+      - name: Postman（M0 ~ M7）
+        run: |
+          npm run postman:build
+          npm run postman:test
+
+      - name: 失敗時印出 livefit 的 log
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/livefit.log" || true
