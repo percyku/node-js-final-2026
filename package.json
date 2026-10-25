@@ -15,7 +15,7 @@
     "test:smoke": "jest test/smoke.test.js --runInBand",
     "db:reset": "docker compose down -v && docker compose up -d",
     "postman:build": "node postman/build-collection.js",
-    "postman:test": "npx --yes newman run postman/livefit.postman_collection.json"
+    "postman:test": "newman run postman/livefit.postman_collection.json"
   },
   "jest": {
     "testEnvironment": "node",
@@ -27,6 +27,7 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "jsonwebtoken": "^9.0.2",
+    "newman": "6.2.3",
     "supertest": "^7.0.0"
   }
 }

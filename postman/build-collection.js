@@ -1348,7 +1348,7 @@ const m7 = folder(
 function loadOpenapi() {
   let yaml;
   try {
-    // 根目錄的 package.json 不能動，這裡借用 jest 帶進來的 js-yaml
+    // 借用 jest 帶進來的 js-yaml，沒有另外寫進 package.json（版本一樣由 package-lock.json 鎖住）
     yaml = require('js-yaml');
   } catch (e) {
     throw new Error('找不到 js-yaml，請先在根目錄執行 npm install');

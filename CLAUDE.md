@@ -123,6 +123,7 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - M7 用預設管理員登入，帳密是 collection 變數 `adminEmail` / `adminPassword`；改過預設管理員的密碼要跟著改，否則 M7 整段失敗。`livefit.postman_environment.json` 是選用的，用來覆蓋這些值。
 - openapi 的回應 schema 沒有寫 `required`，約三分之一的回應只有範例沒有 schema。腳本因此把文件列出的欄位都當成必須出現，沒有 schema 的從範例推結構。在 openapi 補上 schema 後驗證會自動變嚴。
 - 腳本讀 YAML 用的 `js-yaml` 是 jest 帶進來的間接相依，沒有寫進 `package.json`。
+- newman 是 devDependency（固定 `6.2.3`，相依樹由 `package-lock.json` 鎖住），剛 clone 下來要先在根目錄 `npm ci`（嚴格照 lockfile 安裝）。`npm audit` 會報出 newman 相依樹裡的漏洞（含 1 個 critical），6.2.3 是最新版；`npm audit --omit=dev` 是 0，只跑自己的 collection、只連本機時風險很低，接受的前提寫在 `.claude/agents/security-reviewer.md`。
 - 在 sandbox 裡連不到 localhost，檢查連接埠會誤判成後端沒開；執行 `postman:test` 要在 sandbox 外。
 
 ### 測試的分工（僅 `livefit/`）
@@ -133,7 +134,9 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 |---|---|---|---|
 | jest 黑箱測試 | 根目錄 `test/` | M1 ~ M6 的作業驗收合約。題目給的，不動 | 後端在線 |
 | Postman Collection | `postman/` | M0 ~ M7 串成一條流程、回應是否符合 `docs/openapi.yaml` | 後端與資料庫在線 |
-| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管；還有 CI 必須擋下的設定（例如 Jackson 型別轉換，CI 不跑 Postman） | 多數要資料庫在線，不需要啟動後端 |
+| Java 測試 | `livefit/src/test/` | 黑箱測不到的：資料庫裡實際寫了什麼、同時送出的請求、時間邊界、計算的邊界；以及 M7、第三方登入與帳號接管；還有設定有沒有生效（例如 Jackson 型別轉換，在 `mvn test` 就能指出是哪個設定被拿掉） | 多數要資料庫在線，不需要啟動後端 |
+
+三套都在 CI 上跑，見下方「CI」。
 
 - **不要在 Java 用 MockMvc 把 M1 ~ M6 的「打 API 看狀態碼與訊息」再寫一遍**，那和 jest、Postman 重複。
 - **不要在根目錄 `test/` 加 M7 的 jest 測試**：Node 版沒有 M7，加了之後 `npm test` 對 Node 後端會失敗。
@@ -148,13 +151,22 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 
 ### CI（僅 `livefit/`）
 
-`.github/workflows/livefit-test.yml` 在 GitHub Actions 上跑 `mvn test`。只跑 Java 測試、不啟動後端，jest 與 Postman 不在 CI 上。
+`.github/workflows/livefit-test.yml` 在 GitHub Actions 上跑兩個並行的 job，兩個都通過才算通過：
 
-- 觸發條件：push 到 `springboot-backend`，或開 PR 到 `springboot-backend`，而且改到 `livefit/**` 或這個 workflow 檔。只改文件不會跑。沒有手動觸發，因為 `workflow_dispatch` 要求 workflow 檔在預設分支 `main` 上。
+| job | 做什麼 | 失敗時 |
+|---|---|---|
+| `mvn test` | Java 測試，不啟動後端 | 上傳 artifact `surefire-reports` |
+| `jest 與 Postman`（`contract`） | 打包並啟動 livefit，等 `/healthcheck` 就緒後跑 `npm test`（jest 68 項，含 smoke）與 `postman:build`、`postman:test` | 印出 livefit log 的最後 200 行，完整的 log 上傳成 artifact `livefit-log` |
+
+- 觸發條件：push 到 `springboot-backend`，或開 PR 到 `springboot-backend`，而且改到 `livefit/**`、`test/**`、`postman/**`、`docs/openapi.yaml`、`package.json`、`package-lock.json` 或這個 workflow 檔。`livefit/`、`postman/` 底下的 `.md` 排除。其他文件不會觸發，但 `docs/openapi.yaml` 會，因為 Postman 的 openapi 比對是從它讀出來的。沒有手動觸發，因為 `workflow_dispatch` 要求 workflow 檔在預設分支 `main` 上。
 - **這個檔案不要 merge 回 `main`**：`.github/` 是 README 宣告不可修改的目錄。`main` 上的 `test.yml` 是題目給的 Node 版驗收，不要動它。
-- CI 上沒有 `livefit/.env`。資料庫連線寫在 workflow 的 `env`，`JWT_SECRET` 每次執行用 `openssl rand -hex 32` 產生。**`application.properties` 新增沒有預設值的必填設定時，要同步加進 workflow**，否則 Spring context 起不來，連資料庫的測試會全部失敗。
-- 每次都是全新的空資料庫，表由 `ddl-auto=update` 建立，裡面只會有 `AdminSeeder` 建的預設管理員。新寫的測試要自己建資料，不能假設資料庫裡原本就有東西。
-- 失敗時 surefire 報告會上傳成 artifact `surefire-reports`。
+- CI 上沒有 `livefit/.env`。資料庫連線寫在 workflow 層的 `env`，兩個 job 共用；`JWT_SECRET` 每個 job 各自用 `openssl rand -hex 32` 產生（`contract` job 只交給 java 行程，不寫進 `GITHUB_ENV`）。**`application.properties` 新增沒有預設值的必填設定時，要加進 workflow 層的 `env`**，否則 Spring context 起不來；密鑰類的設定照 `JWT_SECRET` 的做法，兩個 job 各自產生並 mask，`contract` job 只交給 java 行程。
+- 兩個 job 各有一個全新的空資料庫，表由 `ddl-auto=update` 建立，裡面只會有 `AdminSeeder` 建的預設管理員。新寫的測試要自己建資料，不能假設資料庫裡原本就有東西。`contract` job 的 Postman 是在 jest 留下資料的資料庫上跑的。
+- M7 的 Postman 用預設管理員登入，靠的是 workflow 沒設 `ADMIN_*`。若在 workflow 設了 `ADMIN_EMAIL` 或 `ADMIN_PASSWORD`，Postman 要用 `--env-var adminEmail=`、`--env-var adminPassword=` 跟著改。
+- **`contract` job 打包時用 `-DskipTests` 是刻意的**：Java 測試由 `mvn test` job 負責。前提是 `mvn test` job 一直存在而且無條件執行，拿掉它或加上 `if:`、`continue-on-error` 時要一起改。
+- jest 失敗時 Postman 照跑，同一輪就看得到兩套的結果，job 仍然算失敗。CI 上的 Postman 每支請求最多等 10 秒（`--timeout-request`），卡住時不會拖到 job 的 20 分鐘逾時；逾時或被取消時一樣會印出並上傳 livefit 的 log。
+- 安全設定：`permissions: contents: read`；checkout 用 `persist-credentials: false`，不把 GITHUB_TOKEN 留在工作目錄；`npm ci --ignore-scripts`（lockfile 裡唯一有安裝腳本的是 macOS 專用的 `fsevents`）。
+- CI 失敗而本機通過時，先比較資料庫：CI 是全新的資料庫加上 jest 的資料，本機的 `livefit` 資料庫累積了很多輪 Postman 的資料。
 
 ### Subagent（`.claude/agents/`，僅 `livefit/`）
 
@@ -228,7 +240,7 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 - 這些設定也套用到 GitHub、Facebook 回應的解析（`RestClient.Builder` 是 Spring 注入的）。`GithubOAuthClientTest`、`FacebookOAuthClientTest` 用 `@JsonTest` 注入的 `ObjectMapper` 解析假回應（`OAuthTestRestClients.builder`，換不到 converter 或少了 `JacksonConfig` 時會直接失敗），**假回應的型別要照平台實際回傳的寫**，record 型別不符時這兩個測試會失敗。
 - **`@JsonTest` 不會載入 `JacksonConfig`**，用到 `ObjectMapper` 的 `@JsonTest` 要 `@Import(JacksonConfig.class)`。
 - 前端送整數欄位要送 JSON 數字（`v-model.number` 或自行轉換）。`<select>` 的值、沒加 `.number` 的輸入框送出的是字串，會回 400。字串欄位反過來，不能加 `.number`。
-- 新增 request DTO 時，在 Postman 補送錯型別回 400 的案例（`Integer` 欄位送字串、小數；`String` 欄位送數字、布林）。HTTP 層由 Postman 驗；CI 不跑 Postman，所以另有兩支 Java 測試：`JacksonCoercionTest`（`@JsonTest`，驗設定內容）與 `JacksonConfigWiringTest`（`@SpringBootTest`，從 MVC 的 converter 清單取出解析 JSON 的 mapper 來驗，擋得下拿掉 `@Configuration`、把類別搬出 `com.percyku.livefit`、加上 `@EnableWebMvc`）。
+- 新增 request DTO 時，在 Postman 補送錯型別回 400 的案例（`Integer` 欄位送字串、小數；`String` 欄位送數字、布林）。HTTP 層由 Postman 驗（CI 的 `contract` job 也會跑）；另有兩支 Java 測試，在 `mvn test` 就能直接指出是哪個設定被拿掉，不用從 Postman 的 400 斷言反推：`JacksonCoercionTest`（`@JsonTest`，驗設定內容）與 `JacksonConfigWiringTest`（`@SpringBootTest`，從 MVC 的 converter 清單取出解析 JSON 的 mapper 來驗，擋得下拿掉 `@Configuration`、把類別搬出 `com.percyku.livefit`、加上 `@EnableWebMvc`）。
 - 升級到 Boot 4 / Jackson 3 時，**先確認這幾支測試注入的還是 MVC 實際使用的 mapper 再跑**：它們用的是 Jackson 2 的 `com.fasterxml` 類別，若 MVC 改用 Jackson 3、context 裡又留著 Jackson 2 的 bean，會驗錯對象而照樣通過。
 
 ### ADMIN 角色與 M7 管理員後台（僅 `livefit/`）
@@ -314,5 +326,5 @@ Node 用 `bcryptjs`（cost 10），Spring 用 `BCryptPasswordEncoder(10)`，雜�
 ## 注意事項
 
 - **`backend/` 的 port 固定 8080，不可更動** —— 前端寫死 `http://127.0.0.1:8080/api/`，Swagger 的 Try it out 與 CI 驗收也都用這個 port。`livefit/` 的 port 由 `.env` 的 `PORT` 控制；兩者若都設 8080 就不能同時啟動
-- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）。這條規則是針對 `main` 上的 Node 作業驗收；Spring Boot 分支為了 Google 登入已改過 `frontend/` 與 `docs/openapi.yaml`，`feature/postman-collection` 起根目錄 `package.json` 也多了 `postman:*` 兩個指令，**這些改動不要 merge 回 `main`**
+- **README 宣告不可修改**：`frontend/`、`docs/`、`test/`、`.github/`、根目錄 `package.json` 與 `package-lock.json`。`docker-compose.yml` 是例外（容器化階段要加 backend 服務）。這條規則是針對 `main` 上的 Node 作業驗收；Spring Boot 分支為了 Google 登入已改過 `frontend/` 與 `docs/openapi.yaml`，`feature/postman-collection` 起根目錄 `package.json` 也多了 `postman:*` 兩個指令，CI 第二階段起又多了 newman 這個 devDependency、`package-lock.json` 也跟著改，**這些改動不要 merge 回 `main`**
 - `POST /api/upload` 是 openapi 標明的加分題，不列入驗收，兩套後端都未實作

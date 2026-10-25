@@ -1,6 +1,9 @@
 name: livefit 測試
 
-# Spring Boot 版（livefit/）的 Java 測試，只跑 mvn test，不啟動後端。
+# Spring Boot 版（livefit/）的測試，兩個 job 並行：
+#   - mvn test：Java 測試，不啟動後端
+#   - jest 與 Postman：啟動 livefit，跑根目錄的黑箱測試（M1 ~ M6 與 smoke）與 Postman Collection（M0 ~ M7、比對 openapi）
+# contract job 打包時用 -DskipTests，前提是 mvn test job 一直存在而且無條件執行；拿掉它或加上條件時要一起改。
 # 這個檔案只放在 springboot-backend 分支，不要 merge 回 main：
 # .github/ 是 README 宣告不可修改的目錄，main 上的 test.yml 是題目給的 Node 版驗收。
 # 沒有 workflow_dispatch：手動觸發要求 workflow 檔在預設分支（main）上，這裡用不到。
@@ -10,16 +13,44 @@ on:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "!livefit/**/*.md"
+      - "test/**"
+      - "postman/**"
+      - "!postman/**/*.md"
+      # Postman 的 openapi 比對是從這份文件讀出來的
+      - "docs/openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/livefit-test.yml"
   pull_request:
     branches: [springboot-backend]
     paths:
       - "livefit/**"
+      - "!livefit/**/*.md"
+      - "test/**"
+      - "postman/**"
+      - "!postman/**/*.md"
+      - "docs/openapi.yaml"
+      - "package.json"
+      - "package-lock.json"
       - ".github/workflows/livefit-test.yml"
 
 concurrency:
   group: livefit-test-${{ github.ref }}
   cancel-in-progress: true
+
+# 兩個 job 都只需要讀程式碼。寫明唯讀，repo 的預設權限改成可寫時也不受影響
+permissions:
+  contents: read
+
+# CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡，兩個 job 共用。
+# 第三方登入的變數都不設：Java 測試把它們換成假的或不連外，Postman 只測連到平台之前就會擋下的失敗案例
+env:
+  DB_HOST: localhost
+  DB_PORT: 5432
+  DB_USERNAME: student
+  DB_PASSWORD: student666
+  DB_DATABASE: livefit
 
 jobs:
   test:
@@ -41,19 +72,14 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-    # CI 上沒有 livefit/.env，application.properties 需要的值寫在這裡。
-    # 第三方登入的測試都換成假的或不連外，GOOGLE_CLIENT_ID 等變數留空即可
-    env:
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_USERNAME: student
-      DB_PASSWORD: student666
-      DB_DATABASE: livefit
     defaults:
       run:
         working-directory: livefit
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 不把 GITHUB_TOKEN 留在工作目錄的 git 設定裡，之後的步驟（包括 npm 套件）讀不到
+          persist-credentials: false
 
       - uses: actions/setup-java@v5
         with:
@@ -79,3 +105,105 @@ jobs:
         with:
           name: surefire-reports
           path: livefit/target/surefire-reports/
+          overwrite: true
+
+  contract:
+    name: jest 與 Postman
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 和 mvn test 各用各的 postgres，資料不會互相影響。
+    # jest 與 Postman 都會自己建需要的資料；M7 用的預設管理員由 AdminSeeder 在啟動時建立（admin@gmail.com / Admin123）
+    services:
+      postgres:
+        image: postgres:16.4-alpine3.20
+        env:
+          POSTGRES_USER: student
+          POSTGRES_PASSWORD: student666
+          POSTGRES_DB: livefit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U student -d livefit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 不把 GITHUB_TOKEN 留在工作目錄的 git 設定裡，之後的步驟（包括 npm 套件）讀不到
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          cache-dependency-path: livefit/pom.xml
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # 這個 job 只需要把服務跑起來，Java 測試由上面的 mvn test job 負責，所以打包時跳過
+      - name: 打包 livefit
+        working-directory: livefit
+        run: ./mvnw -B -ntp -DskipTests package
+
+      # JWT_SECRET 只交給 java 行程，不寫進 GITHUB_ENV，npm 套件、jest、newman 的環境裡都沒有它
+      - name: 啟動 livefit
+        working-directory: livefit
+        run: |
+          secret=$(openssl rand -hex 32)
+          echo "::add-mask::$secret"
+          JWT_SECRET="$secret" java -jar target/livefit-*.jar > "$RUNNER_TEMP/livefit.log" 2>&1 &
+          pid=$!
+          for i in $(seq 1 45); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "livefit 啟動失敗"
+              cat "$RUNNER_TEMP/livefit.log"
+              exit 1
+            fi
+            if curl -sf --max-time 3 "http://localhost:8080/healthcheck" > /dev/null; then
+              echo "livefit 已就緒"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "等了 90 秒 livefit 還沒就緒"
+          cat "$RUNNER_TEMP/livefit.log"
+          exit 1
+
+      # newman 是 devDependency，整個相依樹由 package-lock.json 鎖住。
+      # 不執行安裝腳本：lockfile 裡唯一有安裝腳本的是 macOS 專用的 fsevents，Linux 上本來就不會裝
+      - name: 安裝依賴
+        id: deps
+        run: npm ci --ignore-scripts
+
+      - name: jest（M1 ~ M6 與 smoke）
+        run: npm test
+
+      # jest 失敗也照跑，同一輪就看得到兩套的結果。job 仍然算失敗。
+      # collection 不進版本庫，每次從 build-collection.js 與 docs/openapi.yaml 產生
+      - name: Postman（M0 ~ M7）
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: |
+          npm run postman:build
+          npm run postman:test -- --timeout-request 10000
+
+      # 逾時或被取消時也執行，不然卡住的那一輪看不到 log
+      - name: 失敗時印出 livefit 的 log
+        if: failure() || cancelled()
+        run: tail -n 200 "$RUNNER_TEMP/livefit.log" || true
+
+      # 500 的 stack trace 很長，最後 200 行可能看不到前一套的錯誤，完整的 log 另外上傳
+      - name: 失敗時上傳 livefit 的 log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: livefit-log
+          path: ${{ runner.temp }}/livefit.log
+          if-no-files-found: ignore
+          # 重跑失敗的 job 時同名 artifact 已存在
+          overwrite: true

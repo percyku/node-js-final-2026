@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Jackson 的型別轉換設定有沒有生效：整數欄位不接受字串與小數（application.properties 的兩個設定），
  * 字串欄位不接受數字與布林（JacksonConfig）。
- * HTTP 層回 400 欄位未填寫正確由 Postman 驗；這裡是讓只跑 mvn test 的 CI 也抓得到設定被拿掉，
+ * HTTP 層回 400 欄位未填寫正確由 Postman 驗；這裡讓 mvn test 就能直接指出是哪個設定被拿掉，
  * 或升級 Spring Boot 後屬性名稱改了而被默默忽略（那時會又把不同型別的值轉過去收下，不會報錯）。
  * JacksonConfig 不在 @JsonTest 載入的範圍內，要自己 @Import；正式環境靠 component scan 載入。
  */
