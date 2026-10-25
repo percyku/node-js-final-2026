@@ -6,6 +6,71 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-25 — 整數欄位不再接受字串與小數
+
+分支：`feature/jackson-strict-coercion`
+
+處理 2026-10-21 CI 那筆「還沒做的」第二項，也是三個 subagent 第一次實際使用。
+
+### 修正
+
+- `application.properties` 加上 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`。`price`、`credit_amount`、`experience_years`、`max_participants` 送 `"10"` 或 `10.9`，原本會被轉成 `10` 收下（實測 `"1400"` 存成 1400、`7.5` 存成 7），現在回 400 `欄位未填寫正確`，與 openapi、Node 版一致。
+- 兩行都要：小數轉整數由 `accept-float-as-int` 決定，而且 Jackson 先判斷它，只關第一行的話 `10.9` 仍會被截成 `10`。
+- 空字串 `""` 原本轉成 null 再由 service 回 400，現在由 Jackson 直接擋，結果相同。
+- `ValidUtils.isInteger` 的註解改成說明型別由這兩個設定擋。
+
+附帶的差異：`10.0`、`1e1` 也會被擋，Node 版會收。前端的 `JSON.stringify` 不會送出這兩種寫法。記在 migration plan §8 第 14 列。
+
+### 測試
+
+Postman 新增 6 支，全部預期 400 `欄位未填寫正確`。四個有 `Integer` 欄位的 request DTO 各至少一支；字串與小數兩種輸入是合起來涵蓋，不是每個 DTO 都測兩種（設定作用在目標型別，不分 DTO）。M7 升級教練與更新課程共用同一個 DTO，沒有重複加。
+
+| 請求 | 輸入 |
+|---|---|
+| 新增方案：price 是字串 | `"1400"` |
+| 新增方案：credit_amount 是小數 | `7.5` |
+| 升級教練：年資是字串 | `"3"`（排在「升級教練 A」之前，被收下的話教練 A 會提早升級） |
+| 更新教練資料：年資是小數 | `2.5` |
+| 開課：max_participants 是字串 | `"10"` |
+| 開課：max_participants 是小數 | `10.5` |
+
+Java 測試（兩個 reviewer 都指出的缺口）：
+
+- `GithubOAuthClientTest`、`FacebookOAuthClientTest` 改成 `@JsonTest`，透過新的 `OAuthTestRestClients.builder` 用 Spring Boot 建好的 `ObjectMapper` 解析假回應。原本用 `RestClient.builder()`，它的 ObjectMapper 不讀 `application.properties`，record 型別與新設定不相容時測不出來。helper 會確認 JSON 真的交給換上的 converter 處理，沒換到時直接失敗，不會悄悄退回預設值。
+- 新增 `JacksonCoercionTest`（3 項）：只驗 `ObjectMapper` 的設定有沒有生效，不打 API。CI 只跑 `mvn test`，沒有它的話設定被拿掉、或升級 Boot 後屬性名稱改了，CI 抓不到。
+
+### 文件
+
+- `CLAUDE.md` 新增「整數欄位不接受字串與小數」一節；「測試的分工」的 Java 測試欄補上「CI 必須擋下的設定」。
+- `.claude/agents/security-reviewer.md`、`code-reviewer.md`：Jackson 那一項從「目前會被接受」改成「不能拿掉」，並補上新增 `Integer` 欄位時要加 Postman 案例、設定層的 Java 測試不算重複 Postman。
+- `docs/springboot-migration-plan.md` §8 加第 14 列。
+
+### 驗證
+
+- 改設定前用 curl 重現：`price: "1400"`、`credit_amount: 7.5` 都回 200 並寫入（測完刪除）。改後這兩種與 `""`、`10.0`、`1e1` 都回 400，`price: 1400` 照常建立。
+- `mvn test` 125 項通過（原本 122，加 `JacksonCoercionTest` 3 項）。
+- jest 68 項通過，合法的數字沒有被擋。
+- Postman 164 支請求、469 項斷言，0 失敗。跑完查資料庫，6 支被擋的請求沒有留下資料，教練年資維持 5（沒有被 `2.5` 截成 2）。
+- 反向驗證：用 `-D` 把兩個設定改回 `true`，`JacksonCoercionTest` 有兩項失敗；GitHub 假回應的 `id` 改成字串，GitHub 測試失敗；helper 改成不換 converter，OAuth 測試全部失敗。都已還原。
+- 沒有實際用 GitHub、Facebook 登入。平台回應的型別是兩個 reviewer 對照程式碼與測試裡的假回應確認的：GitHub 的 `id` 是數字、`primary` 與 `verified` 是布林，Facebook 的 `id` 是字串。
+
+### 三個 subagent 第一次使用
+
+- 流程照 `CLAUDE.md`：改完 → `test-runner` → 兩個 reviewer 同時審。處理完 reviewer 提出的項目後，再跑一次 `test-runner`，並請 `code-reviewer` 複審補上的測試。
+- 兩個 reviewer 都沒有高、中嚴重度的發現，但各自指出同一個測試缺口（上面的 OAuth 測試）。`code-reviewer` 複審時又抓到 helper 換不到 converter 時會悄悄通過。在 prompt 貼上 diff 就能正常審查。
+- `test-runner` 的回報要自己再確認：
+  - 它說 Postman「把預設管理員的密碼重設成隨機值」，實際上改的是 Postman 自己建立的管理員，`admin@gmail.com` / `Admin123` 仍可登入。
+  - 第二次呼叫時 prompt 已註明要跳出沙盒，它還是先在沙盒內跑，全部失敗後才重跑。
+  - Postman 只看了摘要，沒有逐支確認新請求的狀態碼，改用查資料庫補驗。
+
+### 還沒做的
+
+- **數字送進字串欄位會被轉成字串收下。** `{"name": 123}` 會被當成 `"123"`，Node 版的 `isValidString` 要求 `typeof === "string"`，所以回 400。這次的兩個設定管不到 `String`（`allow-coercion-of-scalars` 只管數字、布林、日期），沒有對應的 properties，要寫 `Jackson2ObjectMapperBuilderCustomizer`，把轉成 `LogicalType.Textual` 的整數、小數、布林輸入設成失敗。這會影響所有字串欄位，以及 GitHub、Facebook 回應的解析（平台回傳的字串欄位都是字串，預期不受影響，OAuth 測試現在能驗這點）。
+- **CI 第二階段**、**選用的架構調整**：同 2026-10-21 CI 那筆，沒有變動。
+- `test-runner.md` 可以寫明連 localhost 與跑 `mvn test` 要直接跳出沙盒，省掉在沙盒內白跑一次。
+
+---
+
 ## 2026-10-21 — 新增審查與測試用的三個 subagent
 
 分支：`springboot-backend`
