@@ -44,6 +44,8 @@ Java 測試（兩個 reviewer 都指出的缺口）：
 - `CLAUDE.md` 新增「整數欄位不接受字串與小數」一節；「測試的分工」的 Java 測試欄補上「CI 必須擋下的設定」。
 - `.claude/agents/security-reviewer.md`、`code-reviewer.md`：Jackson 那一項從「目前會被接受」改成「不能拿掉」，並補上新增 `Integer` 欄位時要加 Postman 案例、設定層的 Java 測試不算重複 Postman。
 - `docs/springboot-migration-plan.md` §8 加第 14 列。
+- `postman/README.md` 的數量改成 164 支請求、469 個斷言。
+- `code-reviewer` 第三輪複審後，`CLAUDE.md` 與 `code-reviewer.md` 另外補了三點：前端送整數欄位要送 JSON 數字；`fixtures.cleanUp()` 只有會寫入資料庫的測試需要，否則審查者會把 `@JsonTest` 的測試報成少了 cleanUp；升級 Boot 4 時要先把 `JacksonCoercionTest` 改成驗 MVC 實際使用的 mapper，否則可能驗錯對象而照樣通過。
 
 ### 驗證
 
@@ -51,8 +53,9 @@ Java 測試（兩個 reviewer 都指出的缺口）：
 - `mvn test` 125 項通過（原本 122，加 `JacksonCoercionTest` 3 項）。
 - jest 68 項通過，合法的數字沒有被擋。
 - Postman 164 支請求、469 項斷言，0 失敗。跑完查資料庫，6 支被擋的請求沒有留下資料，教練年資維持 5（沒有被 `2.5` 截成 2）。
-- 反向驗證：用 `-D` 把兩個設定改回 `true`，`JacksonCoercionTest` 有兩項失敗；GitHub 假回應的 `id` 改成字串，GitHub 測試失敗；helper 改成不換 converter，OAuth 測試全部失敗。都已還原。
-- 沒有實際用 GitHub、Facebook 登入。平台回應的型別是兩個 reviewer 對照程式碼與測試裡的假回應確認的：GitHub 的 `id` 是數字、`primary` 與 `verified` 是布林，Facebook 的 `id` 是字串。
+- 上面幾項一開始起錯了資料庫：用的是根目錄 `docker-compose.yml` 的 postgres（舊環境裡手動建的 `livefit` 資料庫），livefit 平常用的是 `compose.livefit.yml` 的 `livefit-final`。換過去重跑：`mvn test` 125 項、jest 68 項通過；Postman 164 支請求、469 項斷言 0 失敗，6 支新請求逐支確認都回 400。舊環境留下一輪 Postman 的 `pm_*` 測試資料（6 個帳號、1 個技能、1 個方案、3 堂課），沒有清。
+- 反向驗證：用 `-D` 把兩個設定改回 `true`，`JacksonCoercionTest` 有兩項失敗；GitHub 假回應的 `id` 改成字串，GitHub 測試失敗；helper 改成不換 converter，`FacebookOAuthClientTest` 5 項、`GithubOAuthClientTest` 6 項全部失敗。都已還原。
+- 沒有實際用 GitHub、Facebook 登入。GitHub 的 `id` 是數字、`primary` 與 `verified` 是布林，Facebook 的 `id` 是字串，這些是依兩個 reviewer 對平台 API 格式的了解，沒有對照官方文件或實際回應（測試裡的假回應是照 record 寫的，不能當證據）。之後實際登入時，順便記下平台的回應來佐證。
 
 ### 三個 subagent 第一次使用
 
@@ -61,7 +64,8 @@ Java 測試（兩個 reviewer 都指出的缺口）：
 - `test-runner` 的回報要自己再確認：
   - 它說 Postman「把預設管理員的密碼重設成隨機值」，實際上改的是 Postman 自己建立的管理員，`admin@gmail.com` / `Admin123` 仍可登入。
   - 第二次呼叫時 prompt 已註明要跳出沙盒，它還是先在沙盒內跑，全部失敗後才重跑。
-  - Postman 只看了摘要，沒有逐支確認新請求的狀態碼，改用查資料庫補驗。
+  - Postman 只看了摘要，沒有逐支確認新請求的狀態碼，改用查資料庫補驗。換資料庫重跑時才逐支確認。
+- 換資料庫重跑時，auto mode 的權限分類器一直沒有回應，`test-runner` 與主 session 都跑不了 Postman，最後由使用者在輸入框用 `!` 執行。
 
 ### 還沒做的
 

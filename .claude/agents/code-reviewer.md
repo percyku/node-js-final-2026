@@ -38,13 +38,13 @@ tools: Read, Grep, Glob
   - 上鎖的時機與順序有沒有變。
   - 兩處計算合併成一處後，取消的報名、沒有購買紀錄的使用者等情況是否仍得到相同結果。
   - 錯誤訊息與檢查順序有沒有變。
-- **Jackson 型別轉換**（`spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`）是全域設定，會影響所有端點，**這兩行不能拿掉**。新增 `Integer` 欄位的 request DTO 時，Postman 要補「送字串」「送小數」回 400 的案例。查詢參數（`per`、`page` 等）宣告成 `String` 由 service 解析，不經 Jackson。
+- **Jackson 型別轉換**（`spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`）是全域設定，會影響所有端點，**這兩行不能拿掉**。新增 `Integer` 欄位的 request DTO 時，Postman 要補「送字串」「送小數」回 400 的案例；前端送這些欄位要送 JSON 數字（`v-model.number` 或自行轉換），`<select>` 的值或沒加 `.number` 的輸入框會送出字串而回 400。查詢參數（`per`、`page` 等）宣告成 `String` 由 service 解析，不經 Jackson。
 
 ### 測試有沒有被刪除、跳過或放寬
 
 只要看到下列任何一種，都要回報，並說明是否有合理的理由（例如規格本身改了）：
 
-- Java（`livefit/src/test/`）：刪掉 `@Test`、加上 `@Disabled`、`assumeTrue` / `assumeFalse`、`@RepeatedTest` 次數變少、預期值被改成符合新的（錯誤）結果、斷言被換成較弱的（例如 `assertEquals` 改成 `assertNotNull`）、用 `try/catch` 把失敗吞掉、逾時被調高、`@AfterEach` 少了 `fixtures.cleanUp()`。
+- Java（`livefit/src/test/`）：刪掉 `@Test`、加上 `@Disabled`、`assumeTrue` / `assumeFalse`、`@RepeatedTest` 次數變少、預期值被改成符合新的（錯誤）結果、斷言被換成較弱的（例如 `assertEquals` 改成 `assertNotNull`）、用 `try/catch` 把失敗吞掉、逾時被調高、會寫入資料庫的測試 `@AfterEach` 少了 `fixtures.cleanUp()`（`@JsonTest` 與只用假 repository 的測試本來就不呼叫）。
 - 根目錄 `test/`（jest）：**這個目錄是題目給的、不可修改**，有任何改動都要回報。
 - `postman/build-collection.js`：刪掉請求、刪掉或放寬斷言、關掉 `[openapi]` 驗證、`MSG` 與 `ErrorMessages.java` 不一致。
 - `pom.xml`：surefire 的 `excludes`、`skipTests`、`testFailureIgnore`。
