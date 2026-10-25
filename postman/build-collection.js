@@ -270,6 +270,11 @@ const m1 = folder('M0-M1 健康檢查、技能與方案', '全部免登入。建
     body: {},
     tests: fail(400, MSG.invalidFields),
   }),
+  // 字串欄位送數字或布林要擋下來，不能被 Jackson 轉成字串收下（JacksonConfig）
+  post('新增技能：name 是數字', '/api/coaches/skill', {
+    body: { name: 12345 },
+    tests: fail(400, MSG.invalidFields),
+  }),
   post('新增暫時的技能（等一下刪掉）', '/api/coaches/skill', {
     body: { name: '暫時技能_{{runId}}' },
     tests: [...ok(), ...save('tempSkillId', 'json.data && json.data.id')],
@@ -331,6 +336,10 @@ const m1 = folder('M0-M1 健康檢查、技能與方案', '全部免登入。建
   }),
   post('新增方案：credit_amount 是小數', '/api/credit-package', {
     body: { name: '小數堂數_{{runId}}', credit_amount: 7.5, price: 1400 },
+    tests: fail(400, MSG.invalidFields),
+  }),
+  post('新增方案：name 是布林', '/api/credit-package', {
+    body: { name: true, credit_amount: 7, price: 1400 },
     tests: fail(400, MSG.invalidFields),
   }),
   post('新增暫時的方案（等一下刪掉）', '/api/credit-package', {
@@ -446,6 +455,11 @@ const m2 = folder('M2 會員系統', '註冊、登入、個人資料、修改密
   put('更新暱稱：缺 name', '/api/users/profile', {
     auth: 'memberToken',
     body: {},
+    tests: fail(400, MSG.invalidFields),
+  }),
+  put('更新暱稱：name 是數字', '/api/users/profile', {
+    auth: 'memberToken',
+    body: { name: 2026 },
     tests: fail(400, MSG.invalidFields),
   }),
   put('修改密碼：新密碼不符合規則', '/api/users/password', {
@@ -679,6 +693,11 @@ const m3 = folder(
     post('開課：max_participants 是小數', '/api/admin/coaches/courses', {
       auth: 'coachToken',
       body: courseBody({ name: '小數名額_{{runId}}', max_participants: 10.5 }),
+      tests: fail(400, MSG.invalidFields),
+    }),
+    post('開課：description 是小數', '/api/admin/coaches/courses', {
+      auth: 'coachToken',
+      body: courseBody({ name: '小數簡介_{{runId}}', description: 3.14 }),
       tests: fail(400, MSG.invalidFields),
     }),
     post('開課：一般會員不能開課', '/api/admin/coaches/courses', {

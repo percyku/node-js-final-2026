@@ -1,12 +1,14 @@
 package com.percyku.livefit.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** OAuth client 的測試共用：讓 MockRestServiceServer 的假回應用正式環境同一個 ObjectMapper 解析 */
 final class OAuthTestRestClients {
@@ -19,6 +21,11 @@ final class OAuthTestRestClients {
      * （正式環境注入的 RestClient.Builder 用的就是它），record 的欄位型別與嚴格的 Jackson 設定不相容時測試才會失敗。
      */
     static RestClient.Builder builder(ObjectMapper objectMapper) {
+        // JacksonConfig 不在 @JsonTest 載入的範圍內，測試類別忘了 @Import 的話，注入的 ObjectMapper 少了字串欄位的嚴格設定，
+        // 測試會照樣通過，卻沒有驗到正式環境的解析規則
+        assertThatThrownBy(() -> objectMapper.readValue("123", String.class))
+                .as("測試類別要加 @Import(JacksonConfig.class)")
+                .isInstanceOf(MismatchedInputException.class);
         return RestClient.builder().messageConverters(converters -> {
             converters.replaceAll(converter -> converter instanceof MappingJackson2HttpMessageConverter
                     ? new MappingJackson2HttpMessageConverter(objectMapper)
