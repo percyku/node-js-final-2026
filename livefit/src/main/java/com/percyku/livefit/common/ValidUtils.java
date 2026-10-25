@@ -22,7 +22,10 @@ public final class ValidUtils {
         return value != null && !value.trim().isEmpty();
     }
 
-    /** isInteger：Node 版要求 JSON 中必須是數字型別的整數，字串數字視為不合法 */
+    /**
+     * isInteger：Node 版要求 JSON 中必須是數字型別的整數，字串數字與小數視為不合法。
+     * 型別在反序列化時就由 application.properties 的兩個 Jackson 設定擋掉（回 400），這裡只剩檢查有沒有值。
+     */
     public static boolean isInteger(Integer value) {
         return value != null;
     }
