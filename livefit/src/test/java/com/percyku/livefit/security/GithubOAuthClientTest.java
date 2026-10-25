@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.percyku.livefit.common.ApiException;
 import com.percyku.livefit.common.ErrorMessages;
 import com.percyku.livefit.config.GithubProperties;
+import com.percyku.livefit.config.JacksonConfig;
 import com.percyku.livefit.entity.UserIdentity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.json.JsonTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -29,9 +31,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 /**
  * GitHub 的回應用 MockRestServiceServer 假造，不會真的連線。
  * 用 Spring Boot 依 application.properties 建好的 ObjectMapper 解析，和正式環境注入的 RestClient.Builder 一樣，
- * record 的欄位型別若與平台回應不符（例如嚴格的 Jackson 設定不肯把字串轉成數字）這裡就會失敗。
+ * record 的欄位型別若與平台回應不符（例如嚴格的 Jackson 設定不肯把字串轉成數字、或把數字轉成字串）這裡就會失敗。
+ * JacksonConfig 不在 @JsonTest 載入的範圍內，要 @Import。
  */
 @JsonTest
+@Import(JacksonConfig.class)
 class GithubOAuthClientTest {
 
     private static final String TOKEN_URI = "https://github.com/login/oauth/access_token";
