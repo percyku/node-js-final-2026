@@ -6,6 +6,74 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-25 — 字串欄位不再接受數字與布林
+
+分支：`feature/jackson-strict-string`
+
+處理下面「整數欄位不再接受字串與小數」那筆「還沒做的」第一項。
+
+### 修正
+
+- 新增 `config/JacksonConfig`：一個 `Jackson2ObjectMapperBuilderCustomizer`，用 `postConfigurer` 把「整數、小數、布林轉成字串」（`LogicalType.Textual`）設成失敗。這個方向沒有對應的 properties，所以寫成設定類別。
+- `{"name": 123}`、`true`、`3.14` 原本會被存成 `"123"`、`"true"`、`"3.14"`（實測技能名稱），現在回 400 `欄位未填寫正確`，與 Node 版的 `isValidString`（`typeof === "string"`）一致。
+- 影響所有 request body 的字串欄位，以及 GitHub、Facebook 回應的解析。兩個平台回傳的字串欄位都是 JSON 字串，這是依兩個 reviewer 對平台文件的了解，沒有連網查證；OAuth 測試現在會驗 record 與假回應一致。
+- 型別錯誤排在所有 service 檢查之前，所以有幾處回的訊息變了，狀態碼都還是 400：
+  - 註冊、登入、修改密碼、建立管理員送數字密碼：原本回「密碼不符合規則…」，現在回 `欄位未填寫正確`，與 Node 版一致。數字不可能符合密碼規則，所以沒有原本能成功的請求因此失敗。
+  - 無密碼帳號設定密碼：`password` 帶數字或布林，原本會被忽略、照常設定，現在回 400；`new_password` 帶數字時，原本先回「請重新登入」，現在先回 `欄位未填寫正確`。openapi 補上說明。前端對無密碼帳號不送 `password`，不受影響。
+  - M7 升級教練的 `description` 帶數字，原本會被存成字串，現在回 400。
+- `profile_image_url` 送數字時，Node 版會跳過 https 檢查照收，livefit 回 400。這個差異原本就有（livefit 以前會轉成字串，再卡在 https 檢查），不是這次造成的，這次記進 migration plan §8 第 15 列。
+
+### 測試
+
+Postman 新增 4 支，全部預期 400 `欄位未填寫正確`，整數、小數、布林三種輸入都有：
+
+| 請求 | 輸入 |
+|---|---|
+| 新增技能：name 是數字 | `12345` |
+| 新增方案：name 是布林 | `true` |
+| 更新暱稱：name 是數字 | `2026` |
+| 開課：description 是小數 | `3.14` |
+
+Java 測試：
+
+- `JacksonCoercionTest` 加上 `@Import(JacksonConfig.class)`，新增「數字與布林不能轉成字串」「字串與null照常接受」2 項，共 5 項。
+- 新增 `JacksonConfigWiringTest`（`@SpringBootTest`，1 項）：從 `RequestMappingHandlerAdapter` 的 converter 清單取出解析 JSON 的 mapper，驗兩個方向的設定都有套用。`@JsonTest` 要 `@Import` 才會載入 `JacksonConfig`，驗不到正式環境靠 component scan 載入；拿掉 `@Configuration` 時其他測試都照樣通過，這支補上這個缺口（`code-reviewer` 指出）。第一版直接注入 converter bean，`code-reviewer` 複審時指出加上 `@EnableWebMvc` 時 bean 還在、MVC 卻換了 mapper，所以改成從清單取。
+- `GithubOAuthClientTest`、`FacebookOAuthClientTest` 加上 `@Import(JacksonConfig.class)`。`OAuthTestRestClients` 開頭先檢查注入的 mapper 會拒絕把數字轉成字串，忘了 `@Import` 時直接失敗。
+
+### 文件
+
+- `CLAUDE.md` 原本的「整數欄位不接受字串與小數」一節改寫成「Jackson 型別轉換：欄位不接受別的型別」，用表格列出兩個方向各靠哪個設定。
+- `.claude/agents/security-reviewer.md`、`code-reviewer.md` 同步：`JacksonConfig` 與它的 `@Configuration` 不能拿掉、`@JsonTest` 要 `@Import`。`security-reviewer.md` 刪掉「數字送進字串欄位是已知落差，不必回報」，改成寫明被型別錯誤搶先回 400 不構成繞過，會被這一層跳過的是登入失敗計數、稽核紀錄這類每個請求都要做一次的副作用，要放在 filter 層。
+- `docs/openapi.yaml` 無密碼帳號設定密碼那一段，補上三個欄位有帶的話都必須是字串或 null。
+- `docs/springboot-migration-plan.md` §8 加第 15 列。
+- `postman/README.md` 的數量改成 168 支請求、481 個斷言。
+
+### 驗證
+
+- 改前用 curl 重現（測完刪除）；改後 `12345`、`true`、`3.14` 都回 400，正常字串照常建立，上一筆的整數設定仍然有效。
+- `mvn test` 128 項（原本 125；`JacksonCoercionTest` 加 2 項、`JacksonConfigWiringTest` 1 項）、jest 68 項、Postman 168 支請求 481 項斷言，0 失敗。資料庫是 `livefit-final-postgres-1`。10 支型別案例（上一筆 6 支加這次 4 支）逐支確認都回 400。jest 是在補 `JacksonConfigWiringTest` 與改文件之前跑的，之後主程式沒有變動。
+- 前端只有四個整數欄位做了數字轉換，沒有把數字送進字串欄位的地方。
+- 反向驗證，都已還原：
+  - `JacksonCoercionTest` 拿掉 `@Import`：「數字與布林不能轉成字串」失敗。
+  - `GithubOAuthClientTest` 拿掉 `@Import`：helper 的檢查讓 6 項全部失敗。
+  - Facebook 假回應的 `id` 改成數字：成功登入那項失敗。
+  - 拿掉 `JacksonConfig` 的 `@Configuration`：`JacksonConfigWiringTest` 失敗，`JacksonCoercionTest` 照樣通過。
+  - `WebMvcConfig` 加上 `@EnableWebMvc`：`JacksonConfigWiringTest` 失敗。
+- 上一筆 merge 回 `springboot-backend` 後 push，GitHub 上的 CI 通過（125 項，`ubuntu-24.04`）。這個分支還沒 push。
+
+### subagent 的使用情況
+
+- `test-runner` 調整後的規則：逐支列出指定的 Postman 請求、回報資料庫容器、不再把兩個管理員混為一談，這三點都做到了。第一次呼叫時，前置檢查的 `docker ps`、`curl` 還是先在沙盒內試了一次（三套測試本身直接在沙盒外跑），之後兩次沒有再發生。
+- `code-reviewer` 審了三輪：第一輪指出 `@Import` 驗不到接線、文件過時、openapi 不一致；第二輪指出注入 converter bean 不等於 MVC 實際用的 mapper；第三輪沒有問題。
+- `security-reviewer` 沒有發現問題。
+
+### 還沒做的
+
+- **CI 第二階段**、**選用的架構調整**：同 2026-10-21 CI 那筆。
+- 用 GitHub、Facebook 實際登入一次，記下平台的回應。今天兩筆修正都讓 record 型別不符時登入直接失敗，目前只有 reviewer 的判斷，沒有實際回應佐證。
+
+---
+
 ## 2026-10-25 — 依第一次使用的狀況調整 `test-runner`
 
 分支：`springboot-backend`

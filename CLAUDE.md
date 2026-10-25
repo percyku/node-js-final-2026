@@ -213,17 +213,23 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 
 其他對齊 Node 行為的地方：教練端點權限不足回 **401 而非 403**（`使用者尚未成為教練`）；JWT 驗證後仍回 DB 撈 user，**角色以 DB 當下的 `role` 為準**，不信任 token 內的 role。
 
-### 整數欄位不接受字串與小數（僅 `livefit/`）
+### Jackson 型別轉換：欄位不接受別的型別（僅 `livefit/`）
 
-`price`、`credit_amount`、`experience_years`、`max_participants` 送 `"10"` 或 `10.9` 要回 400 `欄位未填寫正確`。這是靠 `application.properties` 的 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false`，在反序列化時就擋下；`ValidUtils.isInteger` 只檢查有沒有值。**這兩行不要拿掉**，拿掉後不會報錯，而是又把字串與小數轉成整數收下。
+送錯型別一律回 400 `欄位未填寫正確`，在反序列化時就擋下，排在所有 service 檢查之前（只有 Security filter 的 401／403 比它早）。兩個方向各靠一處設定，**都不要拿掉**：拿掉後不會報錯，而是把不同型別的值轉過去收下。
 
-- 兩行都要：只關第一行的話，小數轉整數仍由第二行決定，`10.9` 會被截成 `10`。
+| 方向 | 例子 | 設定 |
+|---|---|---|
+| 字串、小數 → 整數 | `"price": "10"`、`"price": 10.9` | `application.properties` 的 `spring.jackson.mapper.allow-coercion-of-scalars=false` 與 `spring.jackson.deserialization.accept-float-as-int=false` |
+| 數字、布林 → 字串 | `"name": 123`、`"name": true` | `config/JacksonConfig`（沒有對應的 properties） |
+
+- 整數那兩行都要：只關第一行的話，小數轉整數仍由第二行決定，`10.9` 會被截成 `10`。`ValidUtils.isInteger` 只檢查有沒有值。
 - `10.0`、`1e1` 也會被擋，Node 版會收（差異記在 `docs/springboot-migration-plan.md` §8）。
-- 這兩個設定也套用到 GitHub、Facebook 回應的解析（`RestClient.Builder` 是 Spring 注入的）。`GithubOAuthClientTest`、`FacebookOAuthClientTest` 用 `@JsonTest` 注入的 `ObjectMapper` 解析假回應（`OAuthTestRestClients.builder`，換不到 converter 時會直接失敗），**假回應的型別要照平台實際回傳的寫**，record 型別不符時這兩個測試會失敗。
-- 前端送整數欄位要送 JSON 數字（`v-model.number` 或自行轉換）。`<select>` 的值、沒加 `.number` 的輸入框送出的是字串，會回 400；改設定以前這種輸入會被默默收下。
-- 新增 `Integer` 欄位的 request DTO 時，在 Postman 補「送字串」「送小數」回 400 的案例。HTTP 層由 Postman 驗；`JacksonCoercionTest` 只驗設定有沒有生效，讓只跑 `mvn test` 的 CI 也抓得到。
-- 升級到 Boot 4 / Jackson 3 時，**先把 `JacksonCoercionTest` 改成驗 Spring MVC 實際使用的 mapper 再跑**：它注入的是 Jackson 2 的 `com.fasterxml` `ObjectMapper`，若升級後 MVC 改用 Jackson 3、context 裡又還留著一個 Jackson 2 的 bean，它會驗錯對象而照樣通過。
-- 反方向還沒處理：數字送進字串欄位（`{"name": 123}`）會被轉成 `"123"` 收下，Node 版回 400。
+- 型別錯誤排在最前面，所以有些情況回的訊息不是 service 的那一句：數字密碼回 `欄位未填寫正確` 而不是「密碼不符合規則」（與 Node 版一致）；無密碼帳號設定密碼時，`password` 帶數字也會回 400（openapi 已註明）。
+- 這些設定也套用到 GitHub、Facebook 回應的解析（`RestClient.Builder` 是 Spring 注入的）。`GithubOAuthClientTest`、`FacebookOAuthClientTest` 用 `@JsonTest` 注入的 `ObjectMapper` 解析假回應（`OAuthTestRestClients.builder`，換不到 converter 或少了 `JacksonConfig` 時會直接失敗），**假回應的型別要照平台實際回傳的寫**，record 型別不符時這兩個測試會失敗。
+- **`@JsonTest` 不會載入 `JacksonConfig`**，用到 `ObjectMapper` 的 `@JsonTest` 要 `@Import(JacksonConfig.class)`。
+- 前端送整數欄位要送 JSON 數字（`v-model.number` 或自行轉換）。`<select>` 的值、沒加 `.number` 的輸入框送出的是字串，會回 400。字串欄位反過來，不能加 `.number`。
+- 新增 request DTO 時，在 Postman 補送錯型別回 400 的案例（`Integer` 欄位送字串、小數；`String` 欄位送數字、布林）。HTTP 層由 Postman 驗；CI 不跑 Postman，所以另有兩支 Java 測試：`JacksonCoercionTest`（`@JsonTest`，驗設定內容）與 `JacksonConfigWiringTest`（`@SpringBootTest`，從 MVC 的 converter 清單取出解析 JSON 的 mapper 來驗，擋得下拿掉 `@Configuration`、把類別搬出 `com.percyku.livefit`、加上 `@EnableWebMvc`）。
+- 升級到 Boot 4 / Jackson 3 時，**先確認這幾支測試注入的還是 MVC 實際使用的 mapper 再跑**：它們用的是 Jackson 2 的 `com.fasterxml` 類別，若 MVC 改用 Jackson 3、context 裡又留著 Jackson 2 的 bean，會驗錯對象而照樣通過。
 
 ### ADMIN 角色與 M7 管理員後台（僅 `livefit/`）
 

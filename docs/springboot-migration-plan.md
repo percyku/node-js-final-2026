@@ -303,6 +303,7 @@ request.get(`coaches/?per=${per}&page=${page}`)   // baseURL 為 http://127.0.0.
 | 12 | 註冊是「先查 email 再寫入」，兩個同 email 的請求同時到時，後者撞 unique 約束 → 500 | 接住約束衝突後重查，回 409 `Email 已被使用`（Google 登入首次建立帳號的併發同理，改用已建好的帳號照常登入） |
 | 13 | 報名的三項檢查（報名過、堂數、名額）是先查再寫，沒有交易也沒有上鎖，`course_booking` 也沒有唯一約束（讀程式碼得知，沒有對 Node 版實測） | `CourseService.book` 先鎖使用者再鎖課程，同時送出的請求不會超賣；`course_booking` 另有 `(user_id, course_id)` 唯一約束（§14） |
 | 14 | 整數欄位用 `Number.isInteger` 判斷，JSON 的 `10.0`、`1e1` 解析後就是 `10`，照收 | Jackson 看得到原文的小數點與指數，當成小數回 400 `欄位未填寫正確`（`application.properties` 的 `accept-float-as-int=false`，為了擋 `10.9` 而加）。前端的 `JSON.stringify` 不會送出這兩種寫法。這一列不是依 openapi 修正，是附帶的差異 |
+| 15 | M3 升級教練的 `profile_image_url` 不是字串時（例如數字）跳過 https 檢查，照收（讀程式碼得知，沒有對 Node 版實測） | 依 openapi 的 `type: string`，在反序列化時就回 400 `欄位未填寫正確`（`config/JacksonConfig`）。其他字串欄位 Node 版都先用 `isValidString` 擋，兩邊一致 |
 
 **刻意保留的 Node 行為**（openapi 也如此規範，不改）：
 
