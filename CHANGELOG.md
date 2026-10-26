@@ -6,6 +6,38 @@ Node 版（`backend/`）的作業內容不在此記錄範圍；Spring Boot 版�
 
 ---
 
+## 2026-10-26 — 設定 branch protection，實際用 GitHub、Facebook 登入一次
+
+處理下面那筆「還沒做的」第一、三項。程式碼沒有改動。
+
+### branch protection
+
+使用者在 GitHub 建了 ruleset `springboot-backend CI`（Active，目標 `springboot-backend`），用 `gh api repos/.../rulesets` 讀回確認：
+
+- 必要檢查：`mvn test`、`jest 與 Postman`（來源 GitHub Actions），沒有勾「分支必須是最新」。
+- Restrict deletions、Block force pushes。
+- Bypass：Repository admin，只限 PR。
+- 沒有勾 Require a pull request before merging。效果差不多：有必要檢查時，直接 push 的 commit 必須先在別處跑過 CI，所以本機 `git merge` 後 push 的 merge commit 會被拒絕。
+
+之後要改用 PR 頁面的合併按鈕或 `gh pr merge`，不再本機合併後 push。workflow 有 `paths` 過濾，只改文件的 PR 不會觸發 CI、必要檢查會一直等待，這時用 bypass 合併。規則是否真的會擋，下一次開 PR 時確認。
+
+### GitHub、Facebook 實際登入
+
+在 `livefit-final-postgres-1`、本機 livefit（8080）、前端 `npm run dev`（5173）上，由使用者操作登入，從後端 log 與 `user_identities` 確認結果。目的是驗證 10-25 的嚴格型別設定下，平台實際回傳的型別與 record 相符（不符時登入會直接失敗）。
+
+| 平台 | 結果 | 證明了什麼 |
+|---|---|---|
+| GitHub | 成功。email 對到一個 Google 建的已驗證帳號，只新增綁定，`token_version` 沒變（沒有接管） | 換 token、`/user`（`Long id`）、`/user/emails`（`primary`、`verified`）都解析成功 |
+| Facebook | 409 `此 Email 已註冊，請改用原本的方式登入`，email 已有帳號且 Facebook 視為未驗證，符合設計 | 這句是拿到 email 之後才丟的，換 token 與 `/me`（`String id`、`name`、`email`）都解析成功 |
+
+後端 log 沒有反序列化錯誤。Facebook「建立新帳號並綁定」的路徑沒有走到，它和 409 用的是同一段解析，不另外補驗。
+
+### 還沒做的
+
+- **選用的架構調整**：同 2026-10-21 CI 那筆，先保留。
+
+---
+
 ## 2026-10-25 — CI 第二階段：在 CI 上跑 jest 與 Postman
 
 分支：`feature/livefit-ci-stage2`（PR #2）

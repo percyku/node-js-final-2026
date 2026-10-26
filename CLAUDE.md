@@ -159,6 +159,7 @@ npm run postman:test -- --env-var baseUrl=http://localhost:8085   # 換受測位
 | `jest 與 Postman`（`contract`） | 打包並啟動 livefit，等 `/healthcheck` 就緒後跑 `npm test`（jest 68 項，含 smoke）與 `postman:build`、`postman:test` | 印出 livefit log 的最後 200 行，完整的 log 上傳成 artifact `livefit-log` |
 
 - 觸發條件：push 到 `springboot-backend`，或開 PR 到 `springboot-backend`，而且改到 `livefit/**`、`test/**`、`postman/**`、`docs/openapi.yaml`、`package.json`、`package-lock.json` 或這個 workflow 檔。`livefit/`、`postman/` 底下的 `.md` 排除。其他文件不會觸發，但 `docs/openapi.yaml` 會，因為 Postman 的 openapi 比對是從它讀出來的。沒有手動觸發，因為 `workflow_dispatch` 要求 workflow 檔在預設分支 `main` 上。
+- **`springboot-backend` 有 ruleset**（`springboot-backend CI`）：`mvn test` 與 `jest 與 Postman` 是必要檢查，禁止 force push 與刪除，Repository admin 只能在 PR 上 bypass。**不要在本機 `git merge` 後 push**，那個 merge commit 沒跑過 CI 會被拒絕；改用 PR 的合併按鈕或 `gh pr merge`。只改文件的 PR 不會觸發 CI，必要檢查會一直等待，用 bypass 合併。改 job 的 `name:` 時要同步改 ruleset，否則必要檢查永遠等不到。
 - **這個檔案不要 merge 回 `main`**：`.github/` 是 README 宣告不可修改的目錄。`main` 上的 `test.yml` 是題目給的 Node 版驗收，不要動它。
 - CI 上沒有 `livefit/.env`。資料庫連線寫在 workflow 層的 `env`，兩個 job 共用；`JWT_SECRET` 每個 job 各自用 `openssl rand -hex 32` 產生（`contract` job 只交給 java 行程，不寫進 `GITHUB_ENV`）。**`application.properties` 新增沒有預設值的必填設定時，要加進 workflow 層的 `env`**，否則 Spring context 起不來；密鑰類的設定照 `JWT_SECRET` 的做法，兩個 job 各自產生並 mask，`contract` job 只交給 java 行程。
 - 兩個 job 各有一個全新的空資料庫，表由 `ddl-auto=update` 建立，裡面只會有 `AdminSeeder` 建的預設管理員。新寫的測試要自己建資料，不能假設資料庫裡原本就有東西。`contract` job 的 Postman 是在 jest 留下資料的資料庫上跑的。
